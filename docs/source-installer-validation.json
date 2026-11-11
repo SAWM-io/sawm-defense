@@ -1,0 +1,8 @@
+{
+  "platform": "macOS",
+  "installation": "user-scoped source installer",
+  "exit_code": 0,
+  "cli_exit_code": 0,
+  "journal_ok": true,
+  "cloud_calls": 0
+}

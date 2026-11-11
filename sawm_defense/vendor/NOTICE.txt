@@ -1,0 +1,7 @@
+The bundled basira_client.py is the public Basira Python HTTP SDK, copied from
+SAWM-io/cyber-defense-agentique-sawm-basira/connecteur/vendor/basira_client.py.
+Original public download: https://basira.sawm.io/static/sdk/basira_client.py
+SHA256: 49fff5f136e8da7a123f929de55542570dcc6fa8ad78ba317401ad50d519b397
+Copyright 2026 SAWM-io contributors. Apache License 2.0.
+This is client integration code, not SAWM/Basira/TSST/ODVL engine source.
+Hosted services require the customer's own authorised account, grants and credits.

@@ -1,0 +1,10 @@
+SAWM Defense desktop and CLI client, 2026 SAWM.
+Public Cloud client only. No source code of the private SAWM, Basira,
+TSST or ODVL engines is distributed in this package.
+
+The public Basira Python SDK is derived from the Apache-2.0 distribution:
+https://github.com/SAWM-io/cyber-defense-agentique-sawm-basira
+See sawm_defense/vendor/ for the SDK and attribution.
+
+Dependencies retain their respective licenses. Access to Cloud APIs requires
+an enabled account, credentials, scopes, credits and applicable service terms.

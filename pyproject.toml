@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=70"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sawm-defense"
+version = "0.1.0"
+description = "SAWM and Basira Cloud endpoint defense — desktop and CLI"
+requires-python = ">=3.12"
+dependencies = ["httpx==0.28.1", "psutil==7.0.0", "keyring==25.6.0", "defusedxml==0.7.1"]
+
+[project.optional-dependencies]
+dev = ["pytest==8.4.2", "pyinstaller==6.16.0"]
+
+[project.scripts]
+sawm-defense = "sawm_defense.cli:main"
+
+[project.gui-scripts]
+sawm-defense-app = "sawm_defense.gui:main"
+
+[tool.setuptools.packages.find]
+include = ["sawm_defense*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+
+[tool.setuptools.package-data]
+sawm_defense = ["assets/*.png"]
