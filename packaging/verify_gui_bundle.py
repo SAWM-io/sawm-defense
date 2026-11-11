@@ -91,7 +91,8 @@ def linux_window(pid):
         # Name is only a candidate filter. XRes must then establish the exact
         # owner PID; a same-named window belonging to another process fails.
         found = subprocess.run(["xdotool", "search", "--onlyvisible", "--name", "^SAWM Defense.*Protection"],
-                               capture_output=True, text=True, timeout=.5)
+                               capture_output=True, text=True, encoding="utf-8", timeout=.5,
+                               env={**os.environ, "LC_ALL": "C.UTF-8"})
     except subprocess.TimeoutExpired:
         diagnostics["search_timeout"] = True
         return None
@@ -110,7 +111,8 @@ def linux_window(pid):
             continue
         try:
             info = subprocess.run(["xwininfo", "-id", identifier, "-stats"], capture_output=True,
-                                  text=True, timeout=min(.5, remaining), env={**os.environ, "LC_ALL": "C"})
+                                  text=True, encoding="utf-8", timeout=min(.5, remaining),
+                                  env={**os.environ, "LC_ALL": "C.UTF-8"})
         except subprocess.TimeoutExpired:
             continue
         width = re.search(r"^\s*Width:\s*(\d+)", info.stdout, re.M)
@@ -138,8 +140,8 @@ def linux_failure_diagnostics(pid, deadline):
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             return data
-        tree = subprocess.run(["xwininfo", "-root", "-tree"], capture_output=True, text=True,
-                              timeout=min(1, remaining), env={**os.environ, "LC_ALL": "C"})
+        tree = subprocess.run(["xwininfo", "-root", "-tree"], capture_output=True, text=True, encoding="utf-8",
+                              timeout=min(1, remaining), env={**os.environ, "LC_ALL": "C.UTF-8"})
         data["root_tree_returncode"] = tree.returncode
         data["root_tree"] = tree.stdout[:4096]
         data["root_tree_stderr"] = tree.stderr[:400]

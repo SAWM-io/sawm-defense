@@ -23,6 +23,10 @@ def linux_stub(probe, monkeypatch, *, owner=1234, title="SAWM Defense — Protec
 
     def run(command, **kwargs):
         calls.append(command)
+        # The real French title contains an em dash and accents. ASCII locale
+        # makes xwininfo replace the whole title with a conversion error.
+        assert kwargs["env"]["LC_ALL"] == "C.UTF-8"
+        assert kwargs["encoding"] == "utf-8"
         if command[0] == "xdotool":
             assert "--name" in command and "--pid" not in command
             return SimpleNamespace(returncode=0, stdout="6291460\n")
