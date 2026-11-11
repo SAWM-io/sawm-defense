@@ -7,6 +7,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import tomllib
 import venv
 
 
@@ -17,6 +18,7 @@ def main():
     if sys.version_info < (3, 12):
         raise SystemExit("Python 3.12 ou ultérieur est requis.")
     root = Path(__file__).resolve().parents[1]
+    version = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
     default = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "SAWM Defense App" if os.name == "nt" else Path.home() / ".local/share/sawm-defense-app"
     prefix = (args.prefix or default).expanduser().absolute()
     marker = prefix / "installation.json"
@@ -68,7 +70,7 @@ def main():
             # .desktop quoting uses double quotes, not shell interpolation.
             escaped = str(launcher).replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%")
             desktop.write_text('[Desktop Entry]\nType=Application\nName=SAWM Defense\nComment=Defense avec SAWM et Basira Cloud\nExec="' + escaped + '" gui\nTerminal=false\nCategories=System;Security;\n', encoding="utf-8")
-    marker.write_text(json.dumps({"version": "0.1.0", "launcher": str(launcher), "platform": platform.system()}, indent=2), encoding="utf-8")
+    marker.write_text(json.dumps({"version": version, "launcher": str(launcher), "platform": platform.system()}, indent=2), encoding="utf-8")
     print("Installé :", launcher)
     print("Aucun service ni échange Cloud activé. Ouvrez l'application pour configurer les autorisations.")
 
