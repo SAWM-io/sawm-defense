@@ -80,6 +80,8 @@ def linux_owner_pid(identifier):
 
 
 def linux_window(pid):
+    diagnostics = {"expected_pid": pid, "candidates": []}
+    linux_window.last_probe = diagnostics
     if not os.environ.get("DISPLAY"):
         raise RuntimeError("No X display; run this probe with xvfb-run")
     if not shutil.which("xdotool") or not shutil.which("xwininfo"):
@@ -91,7 +93,10 @@ def linux_window(pid):
         found = subprocess.run(["xdotool", "search", "--onlyvisible", "--name", "^SAWM Defense.*Protection"],
                                capture_output=True, text=True, timeout=.5)
     except subprocess.TimeoutExpired:
+        diagnostics["search_timeout"] = True
         return None
+    diagnostics["search_returncode"] = found.returncode
+    diagnostics["search_stderr"] = getattr(found, "stderr", "")[-400:]
     for identifier in found.stdout.splitlines()[:32]:
         remaining = probe_deadline - time.monotonic()
         if remaining <= 0:
@@ -99,6 +104,8 @@ def linux_window(pid):
         if not identifier.isdecimal():
             continue
         owner = linux_owner_pid(identifier)
+        candidate = {"window_id": identifier, "owner_pid": owner}
+        diagnostics["candidates"].append(candidate)
         if owner != pid:
             continue
         try:
@@ -108,12 +115,45 @@ def linux_window(pid):
             continue
         width = re.search(r"^\s*Width:\s*(\d+)", info.stdout, re.M)
         height = re.search(r"^\s*Height:\s*(\d+)", info.stdout, re.M)
+        candidate.update({"info_returncode": info.returncode, "width": int(width[1]) if width else None,
+                          "height": int(height[1]) if height else None, "viewable": "Map State: IsViewable" in info.stdout,
+                          "title_matches": "SAWM Defense" in info.stdout and "Protection" in info.stdout})
         if (info.returncode == 0 and "Map State: IsViewable" in info.stdout
                 and "SAWM Defense" in info.stdout and "Protection" in info.stdout and width and height
                 and int(width[1]) >= 800 and int(height[1]) >= 500):
             return {"window_id": identifier, "owner_pid": owner, "width": int(width[1]), "height": int(height[1]),
                     "method": "XRes 1.2 server-side owner PID + xwininfo IsViewable + application title"}
     return None
+
+
+def linux_failure_diagnostics(pid, deadline):
+    """Bounded diagnostics on the disposable test display, before termination."""
+    data = {"last_probe": getattr(linux_window, "last_probe", {})}
+    try:
+        children = (Path("/proc") / str(pid) / "task" / str(pid) / "children").read_text()[:2048]
+        data["launcher_child_pids"] = [int(value) for value in children.split()[:16] if value.isdecimal()]
+    except OSError:
+        data["launcher_child_pids"] = []
+    try:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return data
+        tree = subprocess.run(["xwininfo", "-root", "-tree"], capture_output=True, text=True,
+                              timeout=min(1, remaining), env={**os.environ, "LC_ALL": "C"})
+        data["root_tree_returncode"] = tree.returncode
+        data["root_tree"] = tree.stdout[:4096]
+        data["root_tree_stderr"] = tree.stderr[:400]
+        # The title filter might be why no candidates were found. Inspect only
+        # a few actual resource IDs from this disposable display to diagnose it.
+        data["resource_owners"] = []
+        for hexadecimal in re.findall(r"^\s+(0x[0-9a-fA-F]+)\s", tree.stdout, re.M)[:12]:
+            if time.monotonic() >= deadline:
+                break
+            identifier = str(int(hexadecimal, 16))
+            data["resource_owners"].append({"window_id": hexadecimal, "owner_pid": linux_owner_pid(identifier)})
+    except (OSError, RuntimeError, subprocess.TimeoutExpired) as error:
+        data["diagnostic_error"] = type(error).__name__ + ": " + str(error)[:300]
+    return data
 
 
 def windows_window(pid):
@@ -258,6 +298,8 @@ def main():
                             break
                         time.sleep(.2)
                     if not result["visible_window"]:
+                        if platform.system() == "Linux":
+                            result["linux_diagnostics"] = linux_failure_diagnostics(process.pid, started + 16)
                         raise RuntimeError("No visible window for the packaged process within the time budget")
                 finally:
                     if process is not None:
@@ -274,6 +316,14 @@ def main():
                             result["cleanup"] = "process already exited"
                         result["exit_code"] = process.returncode
                         result["test_process_reaped"] = process.poll() is not None
+                    for name, stream in (("stdout", stdout), ("stderr", stderr)):
+                        stream.flush()
+                        path = work / (name + ".txt")
+                        result[name + "_bytes"] = path.stat().st_size
+                        if not result["success"]:
+                            with path.open("rb") as captured:
+                                captured.seek(max(0, path.stat().st_size - 2048))
+                                result[name + "_excerpt"] = captured.read(2048).decode("utf-8", errors="replace").replace(str(work), "<disposable-profile>")
             database = state / "evidence.sqlite3"
             if not database.exists():
                 raise RuntimeError("Disposable profile journal absent; cannot verify zero Cloud calls")
