@@ -38,6 +38,32 @@ def test_real_quarantine_restore(setup):
     assert not isolated.exists()
 
 
+def test_unicode_path_quarantine_restore_with_legacy_windows_locale(setup, monkeypatch):
+    executor, config, event, old_path = setup
+    file = old_path.rename(old_path.with_name("資料-عقد.pdf"))
+    event["details"]["path"] = str(file)
+    fdopen, read_text = os.fdopen, Path.read_text
+
+    def legacy_open(fd, mode="r", *args, **kwargs):
+        if "b" not in mode and not args:
+            kwargs.setdefault("encoding", "cp1252")
+        return fdopen(fd, mode, *args, **kwargs)
+
+    def legacy_read(path, *args, **kwargs):
+        if not args:
+            kwargs.setdefault("encoding", "cp1252")
+        return read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "fdopen", legacy_open)
+    monkeypatch.setattr(Path, "read_text", legacy_read)
+    receipt = executor.execute("quarantine", event, config)
+    assert receipt["status"] == "completed", receipt
+    assert not file.exists()
+    restored = executor.restore(receipt, config)
+    assert restored["status"] == "completed", restored
+    assert file.read_bytes() == b"safe fixture"
+
+
 def test_hash_change_blocks_response(setup):
     executor, config, event, file = setup
     file.write_bytes(b"other content")

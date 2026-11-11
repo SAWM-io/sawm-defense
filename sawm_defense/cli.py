@@ -9,7 +9,14 @@ from pathlib import Path
 
 
 def emit(value):
-    print(json.dumps(value, ensure_ascii=False, indent=2, default=str))
+    # Redirected Windows terminals may use CP1252 even for Unicode file paths.
+    # JSON escapes preserve the original data when that stream cannot encode it.
+    output = json.dumps(value, ensure_ascii=False, indent=2, default=str)
+    try:
+        output.encode(getattr(sys.stdout, "encoding", None) or "utf-8")
+    except (LookupError, UnicodeEncodeError):
+        output = json.dumps(value, ensure_ascii=True, indent=2, default=str)
+    print(output)
 
 
 def parser():

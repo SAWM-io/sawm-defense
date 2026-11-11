@@ -371,7 +371,7 @@ class AgentService:
             try:
                 if not no_symlink(path) or path.stat().st_size > 16384:
                     continue
-                receipt = json.loads(path.read_text())
+                receipt = json.loads(path.read_text(encoding="utf-8"))
                 if receipt.get("action") != "block_ip" or not receipt.get("expires_at") or receipt["expires_at"] > time.time():
                     continue
                 if any(a.get("expired_receipt") == receipt["receipt_id"] and a.get("status") == "completed"

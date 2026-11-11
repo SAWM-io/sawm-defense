@@ -91,7 +91,7 @@ class ActionExecutor:
     def _write_receipt(self, record):
         path = self.receipts / (record["receipt_id"] + ".json")
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(fd, "w") as out:
+        with os.fdopen(fd, "w", encoding="utf-8") as out:
             json.dump(record, out, ensure_ascii=False)
             out.flush()
             os.fsync(out.fileno())
@@ -103,7 +103,7 @@ class ActionExecutor:
         path = self.receipts / (receipt_id + ".json")
         if not no_symlink(path):
             raise ValueError("Reçu invalide")
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
         if data.get("receipt_id") != receipt_id:
             raise ValueError("Reçu incohérent")
         return data

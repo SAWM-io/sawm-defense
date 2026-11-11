@@ -10,7 +10,7 @@ L’environnement de développement est macOS Apple Silicon, Python 3.12.14 et T
 python -m pytest -q
 ```
 
-La campagne locale 0.2 a réussi **195 tests**. Bandit ne relève aucune alerte de sévérité moyenne ou élevée. Le [contrôle du paquet Mac 0.2](packaged-macos-validation-0.2.json) vérifie le CLI réellement construit : modification/suppression de fichier, quarantaine manuelle et restauration, détection structurelle automatique d’un script de test déguisé en PDF, alerte persistante et exécution d’une mission de rapport par le service. Le moteur antivirus était absent et le Cloud désactivé ; le fichier suspect n’a pas été supprimé sur la seule base de l’heuristique.
+La campagne locale 0.2 a réussi **199 tests**. Bandit ne relève aucune alerte de sévérité moyenne ou élevée. Le [contrôle du paquet Mac 0.2](packaged-macos-validation-0.2.json) vérifie le CLI réellement construit : modification/suppression de fichier, quarantaine manuelle et restauration, détection structurelle automatique d’un script de test déguisé en PDF, alerte persistante et exécution d’une mission de rapport par le service. Le moteur antivirus était absent et le Cloud désactivé ; le fichier suspect n’a pas été supprimé sur la seule base de l’heuristique.
 
 L’interface 0.2 a également été ouverte et observée : veille active, graphe des ressources et onglet Veille & missions. Le signal d’absence d’antivirus est regroupé par changement d’état pour éviter une alerte identique à chaque fichier. Les fonctions privilégiées ne sont pas déduites de cette vérification visuelle.
 
