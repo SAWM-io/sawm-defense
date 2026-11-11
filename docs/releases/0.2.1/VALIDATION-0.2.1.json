@@ -1,0 +1,73 @@
+{
+  "version": "0.2.1",
+  "status": "passed",
+  "expected_targets": 4,
+  "checked_targets": 4,
+  "artifacts": [
+    {
+      "platform": "macos",
+      "architecture": "arm64",
+      "archive": "SAWM-Defense-0.2.1-macos-arm64.zip",
+      "status": "passed",
+      "size_bytes": 17191423,
+      "sha256": "efc11157678f393647dfe1b5878a9460ea03549f20926c8514d9824b44674087",
+      "binary_sha256": "2337a3f1390042453ec564fe26278e865a9db1051b843651ec31e339fc43b636",
+      "cli_verified": true,
+      "visible_owned_window_verified": true,
+      "cloud_calls_recorded": 0,
+      "archive_content_checked": true,
+      "tests_passed": 340,
+      "tests_skipped": 0
+    },
+    {
+      "platform": "macos",
+      "architecture": "x86_64",
+      "archive": "SAWM-Defense-0.2.1-macos-x86_64.zip",
+      "status": "passed",
+      "size_bytes": 17946470,
+      "sha256": "0f3f9e583035fc2827d7a73a90a46c4b1e8c235f01baf3bd4c44872d6ac58f70",
+      "binary_sha256": "7fec9e4936e7e57d39f37776642bb7fa4ca8edafea9755597f0b7d36067ba68e",
+      "cli_verified": true,
+      "visible_owned_window_verified": true,
+      "cloud_calls_recorded": 0,
+      "archive_content_checked": true,
+      "tests_passed": 340,
+      "tests_skipped": 0
+    },
+    {
+      "platform": "linux",
+      "architecture": "x86_64",
+      "archive": "SAWM-Defense-0.2.1-linux-x86_64.tar.gz",
+      "status": "passed",
+      "size_bytes": 38267590,
+      "sha256": "302a1c233bbef092e6328e8c49134a49f534d7518ec2b56a5c585b018c4009a3",
+      "binary_sha256": "240a4554203dce44b7fb111b9ee19ebb1cded0148264e0ec69048c871c77d4b8",
+      "cli_verified": true,
+      "visible_owned_window_verified": true,
+      "cloud_calls_recorded": 0,
+      "archive_content_checked": true,
+      "tests_passed": 339,
+      "tests_skipped": 1
+    },
+    {
+      "platform": "windows",
+      "architecture": "x86_64",
+      "archive": "SAWM-Defense-0.2.1-windows-x86_64.zip",
+      "status": "passed",
+      "size_bytes": 19149871,
+      "sha256": "cfe4077c9c42c95b1d392e8724cfca43e8da1d73f55f82e08f6ca4de9670cc23",
+      "binary_sha256": "6c394281b31cbff89ea852146c3c14a15540fbb50c640a42b0dd23545d23a611",
+      "cli_verified": true,
+      "visible_owned_window_verified": true,
+      "cloud_calls_recorded": 0,
+      "archive_content_checked": true,
+      "tests_passed": 334,
+      "tests_skipped": 6
+    }
+  ],
+  "errors": [],
+  "verified_at": "2026-11-12",
+  "source_commit": "09070874968d8f619412024286a3d98eebfe8fc4",
+  "workflow_run": "https://github.com/SAWM-io/sawm-defense/actions/runs/43121318842",
+  "scope": "Native packaging tests on harmless files; no real Cloud account, malware or firewall action"
+}

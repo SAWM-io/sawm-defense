@@ -2,7 +2,20 @@
 
 ## Livraison multiplateforme 0.2.1
 
-Le 12 novembre 2026, la suite locale macOS a réussi **329 tests**, dont les contrôles des preuves de livraison et la reprise d’une installation source interrompue. Les comptes natifs exacts et les éventuels tests exclus sont conservés dans les journaux GitHub Actions de chaque plateforme.
+Le 12 novembre 2026, la suite locale macOS a réussi **340 tests**, dont les contrôles des preuves de livraison et la reprise d’une installation source interrompue. Les comptes natifs exacts et les éventuels tests exclus sont conservés dans les journaux GitHub Actions de chaque plateforme.
+
+La [campagne native finale 43121318842](https://github.com/SAWM-io/sawm-defense/actions/runs/43121318842), commit `0907087`, réussit sur les quatre cibles. Chaque job construit puis exécute son propre paquet ; il ne s’agit pas d’une compilation croisée.
+
+| Cible | Tests réussis | Tests ignorés | CLI compilée | Fenêtre de l’application |
+| --- | ---: | ---: | --- | --- |
+| Windows x86-64 | 334 | 6 | Vérifiée | Vérifiée par Win32 |
+| Linux Ubuntu 24.04 x86-64 | 339 | 1 | Vérifiée | Vérifiée par XRes/X11 sous Xvfb |
+| macOS Apple Silicon | 340 | 0 | Vérifiée | Vérifiée par CoreGraphics |
+| macOS Intel | 340 | 0 | Vérifiée | Vérifiée par CoreGraphics |
+
+Les exclusions Windows concernent le menu natif macOS et cinq contrôles auditctl réservés à POSIX, exécutés sous Linux. L’unique exclusion Linux concerne le menu macOS. Les archives et leurs preuves sont résumées dans [VALIDATION-0.2.1.json](releases/0.2.1/VALIDATION-0.2.1.json).
+
+Les premières tentatives ont relevé deux défauts des outils de vérification, corrigés avant livraison : connexions SQLite non fermées pendant le nettoyage Windows, et attribution puis lecture du titre UTF-8 de la fenêtre Linux. Les traces initiales restent dans GitHub Actions ; les fichiers livrés proviennent exclusivement de la campagne finale réussie.
 
 Avant de créer une archive, le pipeline vérifie le CLI réellement compilé : version annoncée, SHA256 du binaire, effets des opérations de fichiers, intégrité du journal, contenu des exports, notification persistante et mission exécutée par le service. Une preuve absente, incomplète, négative ou portant sur un autre binaire bloque l’archivage. Le rapport `PACKAGED-VALIDATION.json` porte le schéma 2.
 
@@ -10,7 +23,9 @@ Une seconde sonde ouvre le binaire graphique avec un profil temporaire hors lign
 
 Les fichiers historiques ci-dessous conservent leur version d’origine ; ils ne servent pas de preuve pour un nouveau paquet. La version 0.2.1 continue les observations de fichiers et du réseau si l’énumération des processus est refusée, et annonce explicitement la couverture incomplète.
 
-État documentaire : **11 novembre 2026**. Ce fichier distingue les contrôles du code, les opérations réellement exécutées et les validations natives restant à compléter. Il ne transforme pas la réussite d’un test avec fournisseur simulé en réussite d’un appel Cloud réel.
+## Historique des campagnes 0.1 et 0.2.0
+
+État documentaire de cet historique : **11 novembre 2026**. Ce fichier distingue les contrôles du code, les opérations réellement exécutées et les validations natives restant à compléter. Il ne transforme pas la réussite d’un test avec fournisseur simulé en réussite d’un appel Cloud réel.
 
 ## Périmètre de la campagne locale
 

@@ -1,0 +1,31 @@
+{
+  "platform": "Darwin",
+  "architecture": "x86_64",
+  "packaged_gui": true,
+  "visible_window": true,
+  "business_workflows_tested": false,
+  "clicks_tested": false,
+  "cloud_enabled": false,
+  "upload_enabled": false,
+  "protect_downloads": false,
+  "notifications_enabled": false,
+  "monitor_on_launch": false,
+  "success": true,
+  "binary_sha256": "7fec9e4936e7e57d39f37776642bb7fa4ca8edafea9755597f0b7d36067ba68e",
+  "pid": 5880,
+  "window": {
+    "window_id": 27,
+    "owner_pid": 5880,
+    "width": 1280,
+    "height": 898,
+    "method": "CoreGraphics on-screen layer-0 window + owner PID"
+  },
+  "cleanup": "SIGTERM",
+  "exit_code": 1,
+  "test_process_reaped": true,
+  "stdout_bytes": 0,
+  "stderr_bytes": 0,
+  "cloud_calls_recorded": 0,
+  "duration_seconds": 2.395,
+  "notes": "Native visible-window smoke test only. Offline disposable profile. Cleanup is process termination, not a simulated user click."
+}

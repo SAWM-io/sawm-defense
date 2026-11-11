@@ -1,0 +1,12 @@
+{
+  "version": "0.2.1",
+  "platform": "linux",
+  "architecture": "x86_64",
+  "archive": "SAWM-Defense-0.2.1-linux-x86_64.tar.gz",
+  "size_bytes": 38267590,
+  "sha256": "302a1c233bbef092e6328e8c49134a49f534d7518ec2b56a5c585b018c4009a3",
+  "publisher_signed": false,
+  "apple_notarized": false,
+  "packaged_validation_included": true,
+  "distribution": "portable native pilot; no private SAWM/Basira/TSST/ODVL engine included"
+}

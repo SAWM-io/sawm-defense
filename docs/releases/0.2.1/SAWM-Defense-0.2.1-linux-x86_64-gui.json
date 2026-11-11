@@ -1,0 +1,31 @@
+{
+  "platform": "Linux",
+  "architecture": "x86_64",
+  "packaged_gui": true,
+  "visible_window": true,
+  "business_workflows_tested": false,
+  "clicks_tested": false,
+  "cloud_enabled": false,
+  "upload_enabled": false,
+  "protect_downloads": false,
+  "notifications_enabled": false,
+  "monitor_on_launch": false,
+  "success": true,
+  "binary_sha256": "240a4554203dce44b7fb111b9ee19ebb1cded0148264e0ec69048c871c77d4b8",
+  "pid": 4263,
+  "window": {
+    "window_id": "2097651",
+    "owner_pid": 4263,
+    "width": 1280,
+    "height": 870,
+    "method": "XRes 1.2 server-side owner PID + xwininfo IsViewable + application title"
+  },
+  "cleanup": "SIGTERM",
+  "exit_code": -15,
+  "test_process_reaped": true,
+  "stdout_bytes": 0,
+  "stderr_bytes": 0,
+  "cloud_calls_recorded": 0,
+  "duration_seconds": 0.999,
+  "notes": "Native visible-window smoke test only. Offline disposable profile. Cleanup is process termination, not a simulated user click."
+}

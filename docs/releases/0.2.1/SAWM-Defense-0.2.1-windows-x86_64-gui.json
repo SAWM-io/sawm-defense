@@ -1,0 +1,31 @@
+{
+  "platform": "Windows",
+  "architecture": "AMD64",
+  "packaged_gui": true,
+  "visible_window": true,
+  "business_workflows_tested": false,
+  "clicks_tested": false,
+  "cloud_enabled": false,
+  "upload_enabled": false,
+  "protect_downloads": false,
+  "notifications_enabled": false,
+  "monitor_on_launch": false,
+  "success": true,
+  "binary_sha256": "6c394281b31cbff89ea852146c3c14a15540fbb50c640a42b0dd23545d23a611",
+  "pid": 4768,
+  "window": {
+    "window_id": 131608,
+    "owner_pid": 4768,
+    "width": 1044,
+    "height": 788,
+    "method": "Win32 EnumWindows + owner PID + IsWindowVisible + GetWindowRect"
+  },
+  "cleanup": "TerminateProcess",
+  "exit_code": 1,
+  "test_process_reaped": true,
+  "stdout_bytes": 0,
+  "stderr_bytes": 0,
+  "cloud_calls_recorded": 0,
+  "duration_seconds": 1.187,
+  "notes": "Native visible-window smoke test only. Offline disposable profile. Cleanup is process termination, not a simulated user click."
+}

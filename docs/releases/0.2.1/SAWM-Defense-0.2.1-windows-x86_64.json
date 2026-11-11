@@ -1,0 +1,12 @@
+{
+  "version": "0.2.1",
+  "platform": "windows",
+  "architecture": "x86_64",
+  "archive": "SAWM-Defense-0.2.1-windows-x86_64.zip",
+  "size_bytes": 19149871,
+  "sha256": "cfe4077c9c42c95b1d392e8724cfca43e8da1d73f55f82e08f6ca4de9670cc23",
+  "publisher_signed": false,
+  "apple_notarized": false,
+  "packaged_validation_included": true,
+  "distribution": "portable native pilot; no private SAWM/Basira/TSST/ODVL engine included"
+}

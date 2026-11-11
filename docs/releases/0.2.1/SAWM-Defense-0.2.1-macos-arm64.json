@@ -1,0 +1,12 @@
+{
+  "version": "0.2.1",
+  "platform": "macos",
+  "architecture": "arm64",
+  "archive": "SAWM-Defense-0.2.1-macos-arm64.zip",
+  "size_bytes": 17191423,
+  "sha256": "efc11157678f393647dfe1b5878a9460ea03549f20926c8514d9824b44674087",
+  "publisher_signed": false,
+  "apple_notarized": false,
+  "packaged_validation_included": true,
+  "distribution": "portable native pilot; no private SAWM/Basira/TSST/ODVL engine included"
+}
