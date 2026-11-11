@@ -16,7 +16,9 @@ jobs:
             binary: dist/sawm-defense/sawm-defense
           - os: windows-latest
             binary: dist/sawm-defense/sawm-defense.exe
-          - os: macos-14
+          - os: macos-15
+            binary: dist/SAWM Defense.app/Contents/MacOS/SAWM Defense
+          - os: macos-15-intel
             binary: dist/SAWM Defense.app/Contents/MacOS/SAWM Defense
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30

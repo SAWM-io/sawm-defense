@@ -139,6 +139,8 @@ def test_destination_change_denied_while_cloud_operation_in_flight(agent):
 
 def test_offline_mode_still_prunes_journal(agent,monkeypatch):
     calls=[]
+    # Reproduce a freshly booted CI/production host, not just a long-lived Mac.
+    monkeypatch.setattr(service.time,"monotonic",lambda:5.0)
     monkeypatch.setattr(agent.store,"prune",lambda days:calls.append(days) or {"removed":0})
     # Maintenance moved to the independent local response worker.
     stop = agent._stop

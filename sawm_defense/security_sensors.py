@@ -229,7 +229,9 @@ class Sensor:
                     offset += len(line)
                     if len(line) > MAX_LINE_BYTES:
                         continue
-                    text = line.decode("utf-8", errors="replace").rstrip("\n")
+                    # Windows-exported logs use CRLF. Remove only one terminal
+                    # line delimiter; _failure still rejects embedded CR/LF.
+                    text = line.decode("utf-8", errors="replace").removesuffix("\n").removesuffix("\r")
                     match = SYSLOG_SSH.fullmatch(text)
                     if not match:
                         continue

@@ -1,6 +1,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime,timezone,timedelta
 import json
+import os
 from pathlib import Path
 import sqlite3
 
@@ -38,7 +39,9 @@ def test_config_atomic_and_no_secret_file(tmp_path):
     cfg.save({"monitor_paths":[str(tmp_path)],"automatic_actions":["quarantine"]})
     assert ConfigManager(tmp_path).load()["automatic_actions"] == ["quarantine"]
     assert list(tmp_path.iterdir()) == [cfg.config_path]
-    assert cfg.config_path.stat().st_mode & 0o077 == 0
+    # NTFS permissions are ACLs; st_mode cannot report their isolation.
+    if os.name != "nt":
+        assert cfg.config_path.stat().st_mode & 0o077 == 0
 
 
 def test_config_symlink_rejected(tmp_path):

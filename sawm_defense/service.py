@@ -93,8 +93,10 @@ class AgentService:
         self._journal = self.store.verify_chain()
         self._key = self.vault.get()
         self._reviewed = set()
-        self._last_maintenance = 0.0
-        self._last_expiry = 0.0
+        # Monotonic time may start near zero on a freshly booted host.
+        # Run catch-up work immediately, including expired firewall receipts.
+        self._last_maintenance = float("-inf")
+        self._last_expiry = float("-inf")
         self._av_health = None
         if self._key:
             self._key_state["persisted"] = True

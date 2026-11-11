@@ -10,9 +10,11 @@ L’environnement de développement est macOS Apple Silicon, Python 3.12.14 et T
 python -m pytest -q
 ```
 
-La campagne locale 0.2 a réussi **193 tests**. Bandit ne relève aucune alerte de sévérité moyenne ou élevée. Le [contrôle du paquet Mac 0.2](packaged-macos-validation-0.2.json) vérifie le CLI réellement construit : modification/suppression de fichier, quarantaine manuelle et restauration, détection structurelle automatique d’un script de test déguisé en PDF, alerte persistante et exécution d’une mission de rapport par le service. Le moteur antivirus était absent et le Cloud désactivé ; le fichier suspect n’a pas été supprimé sur la seule base de l’heuristique.
+La campagne locale 0.2 a réussi **195 tests**. Bandit ne relève aucune alerte de sévérité moyenne ou élevée. Le [contrôle du paquet Mac 0.2](packaged-macos-validation-0.2.json) vérifie le CLI réellement construit : modification/suppression de fichier, quarantaine manuelle et restauration, détection structurelle automatique d’un script de test déguisé en PDF, alerte persistante et exécution d’une mission de rapport par le service. Le moteur antivirus était absent et le Cloud désactivé ; le fichier suspect n’a pas été supprimé sur la seule base de l’heuristique.
 
 L’interface 0.2 a également été ouverte et observée : veille active, graphe des ressources et onglet Veille & missions. Le signal d’absence d’antivirus est regroupé par changement d’état pour éviter une alerte identique à chaque fichier. Les fonctions privilégiées ne sont pas déduites de cette vérification visuelle.
+
+Sous Windows, la confidentialité du dossier d’état dépend des ACL du profil utilisateur ; les bits de mode POSIX ne mesurent pas ces droits. Les clés API restent dans le coffre système, jamais dans le fichier de configuration. Un dossier d’état partagé doit être protégé par des ACL appropriées.
 
 Le total exact doit être lu dans la sortie de la campagne correspondant au commit livré. Il n’est pas repris d’une version précédente. Les contrôles GUI utilisent de vrais widgets Tk dans un sous-processus isolé ; les assertions de service sont injectées pour ne pas modifier les permissions du poste.
 

@@ -55,6 +55,20 @@ def test_text_baseline_then_persistent_burst_is_untrusted(tmp_path):
     assert not burst(sensors.Sensor(config, tmp_path / "state").sample())
 
 
+@pytest.mark.parametrize("ending", [b"\n", b"\r\n"])
+def test_text_log_accepts_native_line_delimiters_but_not_embedded_cr(tmp_path, ending):
+    log = tmp_path / "auth.log"
+    log.write_bytes(b"")
+    sensor = sensors.Sensor({"auth_log_paths": [str(log)]}, tmp_path / "state")
+    sensor.sample()
+    log.write_bytes(text_failures(5).encode().replace(b"\n", ending))
+    events = burst(sensor.sample())
+    assert len(events) == 1
+    assert events[0]["details"]["failure_count"] == 5
+    assert events[0]["details"]["verified_local"] is False
+    assert sensors._failure("Failed password for demo\r from 93.184.216.34 port 40000 ssh2") is None
+
+
 def test_rotation_and_copytruncate_report_gap(tmp_path):
     log = tmp_path / "auth.log"
     log.write_text("old contents\n")
