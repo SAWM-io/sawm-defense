@@ -25,28 +25,28 @@ Une application de défense pour **macOS, Linux et Windows**, le même service e
 
 La résilience concerne la surveillance et la livraison des observations. Le programme ne répare pas une liaison physique coupée. Une détection antivirus vérifiée est distincte d’un indice structurel ou d’une hypothèse SAWM.
 
-## Télécharger et lancer — sans installer Python
+## Télécharger et lancer
 
-Ouvrez la [version pilote **v0.2.0**](https://github.com/SAWM-io/sawm-defense/releases/tag/v0.2.0), puis choisissez l’archive de votre ordinateur dans **Assets**. C’est une préversion destinée aux pilotes clients. [Toutes les versions](https://github.com/SAWM-io/sawm-defense/releases).
+La [version pilote **v0.2.0**](https://github.com/SAWM-io/sawm-defense/releases/tag/v0.2.0) propose actuellement le **paquet Mac Apple Silicon vérifié**, prêt à ouvrir sans installer Python. Pour les autres systèmes, utilisez l’installation depuis les sources ci-dessous. [Toutes les versions](https://github.com/SAWM-io/sawm-defense/releases).
 
-| Votre ordinateur | Archive à télécharger |
-| --- | --- |
-| Mac Apple Silicon — puces M1, M2, M3, M4… | `SAWM-Defense-0.2.0-macos-arm64.zip` |
-| Mac avec processeur Intel | `SAWM-Defense-0.2.0-macos-x86_64.zip` |
-| Linux x86-64 — Ubuntu 24.04 ou environnement compatible | `SAWM-Defense-0.2.0-linux-x86_64.tar.gz` |
-| Windows x86-64 | `SAWM-Defense-0.2.0-windows-x86_64.zip` |
+| Votre ordinateur | Disponibilité v0.2.0 | Nom du paquet prévu |
+| --- | --- | --- |
+| Mac Apple Silicon — puces M1, M2, M3, M4… | **ZIP disponible**, binaire vérifié localement | `SAWM-Defense-0.2.0-macos-arm64.zip` |
+| Mac avec processeur Intel | Sources disponibles ; binaire en attente | `SAWM-Defense-0.2.0-macos-x86_64.zip` |
+| Linux x86-64 — Ubuntu 24.04 | Installateur source disponible ; binaire en attente | `SAWM-Defense-0.2.0-linux-x86_64.tar.gz` |
+| Windows x86-64 | Installateur source disponible ; binaire en attente | `SAWM-Defense-0.2.0-windows-x86_64.zip` |
 
-**Ces archives contiennent l’application et son environnement d’exécution. Aucun Python à installer.** Ne choisissez pas les liens GitHub « Source code » pour une installation prête à lancer. Gardez le dossier de l’application complet : les bibliothèques qui l’accompagnent sont nécessaires.
+La construction des trois binaires restants est bloquée par une erreur de démarrage de GitHub Actions : [suivre la construction](https://github.com/SAWM-io/sawm-defense/actions/runs/43095640697). Ils seront ajoutés après leur construction et la vérification de chaque exécutable. Les quatre formats restent les cibles de distribution ; une archive absente des **Assets** n’est pas encore publiée.
 
-Chaque paquet publié fournit un fichier `START-HERE.txt`, la documentation et sa preuve `PACKAGED-VALIDATION.json`. Cette dernière décrit les essais réellement exécutés sur le **binaire de cet OS**, avec des fichiers de contrôle inoffensifs. Elle ne vaut pas validation d’une intervention réelle sur le pare-feu ni d’un compte Cloud client. Les résultats de construction courants sont accessibles par le badge en haut de cette page ; aucun résultat CI en cours n’est présenté comme acquis.
+Le paquet Mac inclut `START-HERE.txt`, la documentation et `PACKAGED-VALIDATION.json`, qui décrit les essais exécutés sur son binaire avec des fichiers de contrôle inoffensifs. Cette preuve ne vaut pas validation d’une intervention réelle sur le pare-feu ni d’un compte Cloud client.
 
-### Sur Mac — Apple Silicon ou Intel
+### Mac Apple Silicon — application prête à ouvrir
 
-1. Décompressez le ZIP correspondant à votre processeur.
-2. Glissez **SAWM Defense.app** dans **Applications**.
+1. Téléchargez `SAWM-Defense-0.2.0-macos-arm64.zip` dans les **Assets** de la version.
+2. Décompressez le ZIP et glissez **SAWM Defense.app** dans **Applications**.
 3. Ouvrez l’application, puis **Réglages** pour connecter votre compte et choisir vos autorisations.
 
-La préversion utilise une signature ad hoc, sans notarisation Apple. Si macOS demande une vérification, examinez l’origine du paquet et les indications du système ; ne désactivez pas les protections du Mac globalement.
+**Aucun Python à installer.** Gardez l’application complète : elle contient son environnement d’exécution. La préversion utilise une signature ad hoc, sans notarisation Apple. Si macOS demande une vérification, examinez l’origine du paquet et les indications du système ; ne désactivez pas les protections du Mac globalement.
 
 Pour utiliser ce même programme en terminal :
 
@@ -55,66 +55,86 @@ Pour utiliser ce même programme en terminal :
 "/Applications/SAWM Defense.app/Contents/MacOS/SAWM Defense" watch
 ```
 
-### Sur Windows
+### Autres systèmes — récupérer les sources
 
-1. Extrayez entièrement le ZIP dans le dossier de votre choix.
-2. Ouvrez le sous-dossier **sawm-defense**.
-3. Double-cliquez sur **sawm-defense.exe**.
-
-Il s’agit d’une application portable : aucun installateur Python et aucun accès administrateur ne sont nécessaires pour ouvrir l’interface. Les interventions privilégiées restent soumises aux droits du système. Cette préversion ne porte pas encore de signature Authenticode commerciale.
-
-Depuis PowerShell, dans le dossier extrait :
-
-```powershell
-.\sawm-defense\sawm-defense.exe doctor
-.\sawm-defense\sawm-defense.exe watch
-```
-
-### Sur Linux — poste ou serveur
-
-Décompressez l’archive, puis ouvrez son dossier :
-
-```bash
-tar -xzf SAWM-Defense-0.2.0-linux-x86_64.tar.gz
-cd SAWM-Defense-0.2.0-linux-x86_64
-./sawm-defense/sawm-defense gui
-```
-
-L’interface nécessite une session graphique et les bibliothèques natives disponibles sur le système cible. Le binaire vise **Ubuntu 24.04 x86-64** ; sa compatibilité avec une autre distribution doit être vérifiée.
-
-Sur un serveur sans interface graphique, utilisez le même exécutable :
-
-```bash
-./sawm-defense/sawm-defense doctor
-./sawm-defense/sawm-defense watch
-```
-
-Aucun pilote noyau ni règle pare-feu ne sont installés par l’extraction de l’archive. Les fonctions Linux supplémentaires se configurent explicitement : [guide CLI](docs/CLI.md) et [guide noyau](docs/KERNEL.md).
-
-### Au premier lancement
-
-La veille locale et l’inspection des téléchargements démarrent. **Aucune intervention ni transmission Cloud n’est autorisée par défaut.** Ouvrez **Réglages** pour connecter votre compte, choisir les dossiers et autoriser les actions souhaitées. **Veille & missions** présente les alertes et les tâches. Un nouveau ZIP ne remplace pas automatiquement une ancienne application : fermez l’ancienne version avant de la remplacer.
-
-<details>
-<summary><strong>Développeurs : installation depuis les sources et construction des paquets</strong></summary>
-
-Cette voie est facultative et nécessite Python 3.12 avec Tcl/Tk :
+Installez **Python 3.12 ou ultérieur avec Tcl/Tk**. Téléchargez et extrayez **Source code (zip)** depuis la version, puis ouvrez un terminal dans ce dossier. Vous pouvez aussi utiliser Git :
 
 ```bash
 git clone https://github.com/SAWM-io/sawm-defense.git
 cd sawm-defense
+```
+
+Les commandes suivantes se lancent depuis la racine des sources. L’installation ne donne aucun droit administrateur au modèle et n’active aucune règle pare-feu.
+
+#### Linux — Ubuntu 24.04
+
+```bash
+sudo apt install python3 python3-venv python3-tk
+sh packaging/install-linux.sh
+~/.local/share/sawm-defense-app/sawm-defense gui
+```
+
+L’installateur crée une entrée au menu Applications. Pour un serveur en CLI :
+
+```bash
+~/.local/share/sawm-defense-app/sawm-defense doctor
+~/.local/share/sawm-defense-app/sawm-defense watch
+```
+
+Le mode graphique demande une session graphique. Les fonctions privilégiées et les capteurs Linux se configurent séparément : [guide CLI](docs/CLI.md), [guide noyau](docs/KERNEL.md).
+
+#### Windows x86-64
+
+Installez Python avec l’option **Tcl/Tk** et son lanceur Python, puis depuis PowerShell dans les sources :
+
+```powershell
+powershell -NoProfile -File .\packaging\install-windows.ps1
+```
+
+Ouvrez **SAWM Defense** depuis le menu Démarrer. La CLI installée se lance aussi depuis PowerShell :
+
+```powershell
+& "$env:LOCALAPPDATA\SAWM Defense App\SAWM Defense.cmd" doctor
+& "$env:LOCALAPPDATA\SAWM Defense App\SAWM Defense.cmd" watch
+```
+
+L’application s’installe pour l’utilisateur. Les interventions privilégiées exigent toujours les droits du système. Respectez les règles d’exécution de scripts de votre organisation.
+
+#### Mac Intel
+
+Après installation de Python avec Tcl/Tk, créez un environnement depuis les sources :
+
+```bash
 python3.12 -m venv .venv
-# Linux/macOS : source .venv/bin/activate
-# Windows : .venv\Scripts\Activate.ps1
+.venv/bin/python -m pip install .
+.venv/bin/python -m sawm_defense gui
+```
+
+La même installation expose la CLI :
+
+```bash
+.venv/bin/python -m sawm_defense doctor
+.venv/bin/python -m sawm_defense watch
+```
+
+Cette voie fournit le code installable ; elle ne remplace pas la validation du futur paquet Intel.
+
+### Au premier lancement
+
+La veille locale et l’inspection des téléchargements démarrent. **Aucune intervention ni transmission Cloud n’est autorisée par défaut.** Ouvrez **Réglages** pour connecter votre compte, choisir les dossiers et autoriser les actions souhaitées. **Veille & missions** présente les alertes et les tâches. Fermez l’ancienne version avant de remplacer l’application.
+
+<details>
+<summary><strong>Développeurs : tests et construction des paquets</strong></summary>
+
+Dans un environnement Python 3.12+ avec Tcl/Tk :
+
+```bash
 python -m pip install '.[dev]'
-python -m sawm_defense
 python -m pytest -q
 python packaging/build.py
 ```
 
-L’installateur source Linux `packaging/install-linux.sh` crée une entrée de menu utilisateur. Sur Ubuntu, il nécessite `python3`, `python3-venv` et `python3-tk`. Sur Windows, `packaging/install-windows.ps1` crée un raccourci dans le menu Démarrer et requiert un Python avec Tcl/Tk.
-
-Le workflow `.github/workflows/build.yml` construit nativement les quatre variantes, exécute les vérifications du binaire, puis prépare les archives et leurs empreintes SHA256 avec `packaging/release_bundle.py`. PyInstaller doit fonctionner sur l’OS cible ; un paquet Mac ne s’exécute pas sous Windows. Les archives ne distribuent pas les moteurs privés du Cloud.
+Le workflow `.github/workflows/build.yml` prévoit les quatre constructions natives, les vérifications du binaire, puis les archives et empreintes SHA256 avec `packaging/release_bundle.py`. PyInstaller fonctionne sur l’OS cible ; un paquet Mac ne s’exécute pas sous Windows. Les futurs paquets natifs incluront leur environnement Python. Les archives ne distribuent aucun moteur privé du Cloud.
 
 </details>
 
@@ -161,7 +181,7 @@ Le programme inspecte les fichiers observés sur disque. Il ne garantit pas l’
 
 | Fonction | macOS | Linux | Windows |
 | --- | --- | --- | --- |
-| Fichiers sélectionnés, empreintes, CPU/RAM, interface | Essais locaux réels ; preuve du paquet pour chaque architecture | Vérifications du binaire dans la preuve jointe ; exploitation client à valider | Vérifications du binaire dans la preuve jointe ; exploitation client à valider |
+| Fichiers sélectionnés, empreintes, CPU/RAM, interface | Essais réels Apple Silicon ; binaire Intel en attente | Sources installables ; binaire natif en attente de validation | Sources installables ; binaire natif en attente de validation |
 | Processus et connexions | Selon droits ; certaines mesures réseau peuvent être refusées | Selon droits | Selon droits |
 | Inspection structurelle de fichiers | Contrôles locaux bornés | Contrôles portables | Contrôles portables |
 | Antivirus à signatures | ClamAV s’il est installé | ClamAV s’il est installé | Defender ou ClamAV selon disponibilité |
