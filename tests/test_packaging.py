@@ -159,3 +159,49 @@ def test_release_require_is_not_disabled_by_optimized_python():
     result = subprocess.run([sys.executable, "-O", "-c", source], capture_output=True, text=True)
     assert result.returncode != 0
     assert "still enforced" in result.stderr
+
+
+@pytest.mark.parametrize("reader", ["read_ledger_events", "count_ledger_cloud_calls"])
+def test_verifier_closes_sqlite_reader_before_profile_cleanup(tmp_path, monkeypatch, reader):
+    import sqlite3
+    original_connect = sqlite3.connect
+    opened = []
+    def tracked_connect(*args, **kwargs):
+        connection = original_connect(*args, **kwargs)
+        opened.append(connection)
+        return connection
+    database = tmp_path / "evidence.sqlite3"
+    connection = original_connect(database)
+    try:
+        connection.execute("create table ledger(seq integer, kind text, payload text)")
+        connection.execute("insert into ledger values(1,'event',?)", (json.dumps({"id": "fixture"}),))
+        connection.commit()
+    finally:
+        connection.close()
+    monkeypatch.setattr(verify.sqlite3, "connect", tracked_connect)
+    result = getattr(verify, reader)(tmp_path)
+    assert result == ([{"id": "fixture"}] if reader == "read_ledger_events" else 0)
+    assert len(opened) == 1
+    # Keep a strong reference to prove explicit closure, not a GC side effect.
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        opened[0].execute("select 1")
+    database.unlink()  # Windows rejects this while an SQLite handle remains open.
+
+
+def test_verifier_closes_sqlite_reader_when_bad_evidence_raises(tmp_path, monkeypatch):
+    import sqlite3
+    original_connect = sqlite3.connect
+    connection = original_connect(tmp_path / "evidence.sqlite3")
+    try:
+        connection.execute("create table ledger(seq integer, kind text, payload text)")
+        connection.execute("insert into ledger values(1,'event','not JSON')")
+        connection.commit()
+    finally:
+        connection.close()
+    opened = []
+    def tracked_connect(*args, **kwargs):
+        value = original_connect(*args, **kwargs); opened.append(value); return value
+    monkeypatch.setattr(verify.sqlite3, "connect", tracked_connect)
+    with pytest.raises(json.JSONDecodeError): verify.read_ledger_events(tmp_path)
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        opened[0].execute("select 1")

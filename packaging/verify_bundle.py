@@ -6,6 +6,7 @@ content and journal checks pass. This does not test real Cloud or native GUI use
 from __future__ import annotations
 
 import argparse
+from contextlib import closing
 import hashlib
 import json
 import platform
@@ -73,6 +74,18 @@ def validate_html_report(path, evidence_ids):
     require(all(identifier in text for identifier in evidence_ids), "HTML report does not contain the exercised evidence")
 
 
+def read_ledger_events(state):
+    # sqlite3's own context manager commits/rolls back, but does not close.
+    # Windows cannot remove the disposable database while a reader remains open.
+    with closing(sqlite3.connect(state / "evidence.sqlite3")) as db:
+        return [json.loads(row[0]) for row in db.execute("select payload from ledger where kind='event' order by seq")]
+
+
+def count_ledger_cloud_calls(state):
+    with closing(sqlite3.connect(state / "evidence.sqlite3")) as db:
+        return db.execute("select count(*) from ledger where kind='call'").fetchone()[0]
+
+
 def verify(binary, expected_version):
     binary = Path(binary).resolve(strict=True)
     initial_digest = binary_digest(binary)
@@ -103,8 +116,7 @@ def verify(binary, expected_version):
         watch = subprocess.Popen([*base, "watch", "--seconds", "40"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
         def events():
-            with sqlite3.connect(state / "evidence.sqlite3") as db:
-                return [json.loads(row[0]) for row in db.execute("select payload from ledger where kind='event' order by seq")]
+            return read_ledger_events(state)
 
         def wait_for(fn):
             deadline = time.monotonic() + 20
@@ -176,8 +188,7 @@ def verify(binary, expected_version):
             exported = call("report", html_path)
             require(exported.get("status") == "completed" and exported.get("path") == str(html_path), "HTML export receipt failed")
             validate_html_report(html_path, [*event_ids, *action_ids])
-            with sqlite3.connect(state / "evidence.sqlite3") as db:
-                cloud_calls = db.execute("select count(*) from ledger where kind='call'").fetchone()[0]
+            cloud_calls = count_ledger_cloud_calls(state)
             require(cloud_calls == 0, "The full ledger contains a Cloud call")
             require(binary_digest(binary) == initial_digest, "The executable changed during validation")
             return {

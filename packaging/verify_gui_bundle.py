@@ -2,10 +2,14 @@
 
 Disposable offline profile. No clicks, credentials, privileged actions or claims
 about business workflows. Linux needs Xvfb, xdotool and x11-utils; other probes
-use native APIs without accessibility permissions. Total budget: 20 seconds.
+use native APIs without accessibility permissions. Linux also requires libxres1
+for server-side PID attribution without an optional _NET_WM_PID property.
+Total budget: 20 seconds.
 """
 import argparse
+from contextlib import closing
 import ctypes
+import ctypes.util
 import hashlib
 import json
 import os
@@ -20,6 +24,61 @@ import tempfile
 import time
 
 
+def linux_owner_pid(identifier):
+    """Attribute an X resource using XRes 1.2, not a client-set window tag.
+
+    Tk 8.6 only writes _NET_WM_PID when WM_CLIENT_MACHINE was configured.
+    XRes uses the local X client's actual PID and works without a window manager.
+    """
+    class ClientSpec(ctypes.Structure):
+        _fields_ = [("client", ctypes.c_ulong), ("mask", ctypes.c_ulong)]
+
+    class ClientValue(ctypes.Structure):
+        _fields_ = [("spec", ClientSpec), ("length", ctypes.c_long), ("value", ctypes.c_void_p)]
+
+    x11_name, xres_name = ctypes.util.find_library("X11"), ctypes.util.find_library("XRes")
+    if not x11_name or not xres_name:
+        raise RuntimeError("XRes PID attribution unavailable; install libxres1 on the Linux runner")
+    x11, xres = ctypes.CDLL(x11_name), ctypes.CDLL(xres_name)
+    x11.XOpenDisplay.argtypes, x11.XOpenDisplay.restype = [ctypes.c_char_p], ctypes.c_void_p
+    x11.XCloseDisplay.argtypes, x11.XCloseDisplay.restype = [ctypes.c_void_p], ctypes.c_int
+    int_pointer = ctypes.POINTER(ctypes.c_int)
+    for name in ("XResQueryExtension", "XResQueryVersion"):
+        getattr(xres, name).argtypes = [ctypes.c_void_p, int_pointer, int_pointer]
+        getattr(xres, name).restype = ctypes.c_int
+    value_pointer = ctypes.POINTER(ClientValue)
+    xres.XResQueryClientIds.argtypes = [ctypes.c_void_p, ctypes.c_long, ctypes.POINTER(ClientSpec),
+                                       ctypes.POINTER(ctypes.c_long), ctypes.POINTER(value_pointer)]
+    xres.XResQueryClientIds.restype = ctypes.c_int
+    xres.XResGetClientPid.argtypes, xres.XResGetClientPid.restype = [value_pointer], ctypes.c_int
+    xres.XResClientIdsDestroy.argtypes, xres.XResClientIdsDestroy.restype = [ctypes.c_long, value_pointer], None
+    display = x11.XOpenDisplay(None)
+    if not display:
+        raise RuntimeError("Cannot open the X display to verify window ownership")
+    try:
+        first, second = ctypes.c_int(), ctypes.c_int()
+        if not xres.XResQueryExtension(display, ctypes.byref(first), ctypes.byref(second)):
+            raise RuntimeError("X server does not expose the X-Resource extension")
+        if (not xres.XResQueryVersion(display, ctypes.byref(first), ctypes.byref(second))
+                or (first.value, second.value) < (1, 2)):
+            raise RuntimeError("X-Resource 1.2 is required for native client PID attribution")
+        spec, count, values = ClientSpec(int(identifier), 2), ctypes.c_long(), value_pointer()
+        status = xres.XResQueryClientIds(display, 1, ctypes.byref(spec), ctypes.byref(count), ctypes.byref(values))
+        try:
+            # This particular XRes API returns X11 Success (0), unlike
+            # XResQueryVersion. Missing PID is not a permissive fallback.
+            if status != 0 or not values or not 0 < count.value <= 32:
+                return None
+            pids = {xres.XResGetClientPid(ctypes.byref(values[index])) for index in range(count.value)}
+            pids.discard(-1)
+            return next(iter(pids)) if len(pids) == 1 else None
+        finally:
+            if values:
+                xres.XResClientIdsDestroy(count, values)
+    finally:
+        x11.XCloseDisplay(display)
+
+
 def linux_window(pid):
     if not os.environ.get("DISPLAY"):
         raise RuntimeError("No X display; run this probe with xvfb-run")
@@ -27,7 +86,9 @@ def linux_window(pid):
         raise RuntimeError("Install xdotool and x11-utils on the Linux test runner")
     probe_deadline = time.monotonic() + 1
     try:
-        found = subprocess.run(["xdotool", "search", "--onlyvisible", "--pid", str(pid)],
+        # Name is only a candidate filter. XRes must then establish the exact
+        # owner PID; a same-named window belonging to another process fails.
+        found = subprocess.run(["xdotool", "search", "--onlyvisible", "--name", "^SAWM Defense.*Protection"],
                                capture_output=True, text=True, timeout=.5)
     except subprocess.TimeoutExpired:
         return None
@@ -36,6 +97,9 @@ def linux_window(pid):
         if remaining <= 0:
             break
         if not identifier.isdecimal():
+            continue
+        owner = linux_owner_pid(identifier)
+        if owner != pid:
             continue
         try:
             info = subprocess.run(["xwininfo", "-id", identifier, "-stats"], capture_output=True,
@@ -47,8 +111,8 @@ def linux_window(pid):
         if (info.returncode == 0 and "Map State: IsViewable" in info.stdout
                 and "SAWM Defense" in info.stdout and "Protection" in info.stdout and width and height
                 and int(width[1]) >= 800 and int(height[1]) >= 500):
-            return {"window_id": identifier, "owner_pid": pid, "width": int(width[1]), "height": int(height[1]),
-                    "method": "X11 xdotool PID search + xwininfo IsViewable"}
+            return {"window_id": identifier, "owner_pid": owner, "width": int(width[1]), "height": int(height[1]),
+                    "method": "XRes 1.2 server-side owner PID + xwininfo IsViewable + application title"}
     return None
 
 
@@ -211,12 +275,15 @@ def main():
                         result["exit_code"] = process.returncode
                         result["test_process_reaped"] = process.poll() is not None
             database = state / "evidence.sqlite3"
-            if database.exists():
-                with sqlite3.connect(str(database), timeout=1) as db:
-                    result["cloud_calls_recorded"] = db.execute("SELECT COUNT(*) FROM ledger WHERE kind='call'").fetchone()[0]
-                if result["cloud_calls_recorded"]:
-                    result["success"] = False
-                    result["error"] = "Unexpected Cloud call recorded in offline GUI profile"
+            if not database.exists():
+                raise RuntimeError("Disposable profile journal absent; cannot verify zero Cloud calls")
+            # sqlite3's own context manager commits/rolls back but does not
+            # close the file; explicit closing is required before Windows cleanup.
+            with closing(sqlite3.connect(str(database), timeout=1)) as db:
+                result["cloud_calls_recorded"] = db.execute("SELECT COUNT(*) FROM ledger WHERE kind='call'").fetchone()[0]
+            if result["cloud_calls_recorded"]:
+                result["success"] = False
+                result["error"] = "Unexpected Cloud call recorded in offline GUI profile"
             result["stderr_bytes"] = (work / "stderr.txt").stat().st_size
     except Exception as error:
         result["success"] = False
