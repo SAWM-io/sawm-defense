@@ -212,7 +212,8 @@ def test_report_contains_auditable_missions_and_notifications(agent, tmp_path):
     result = tmp_path / "status.json"
     app.export_report(result)
     report = json.loads(result.read_text())
-    assert report["version"] == "0.2.0"
+    from sawm_defense import __version__
+    assert report["version"] == __version__
     assert report["orders"][0]["kind"] == "inventory"
     assert report["notifications"][0]["event_id"] == signal["id"]
     assert report["file_inspection"]["available"]

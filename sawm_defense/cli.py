@@ -6,6 +6,7 @@ import signal
 import sys
 import time
 from pathlib import Path
+from . import __version__
 
 
 def emit(value):
@@ -21,7 +22,7 @@ def emit(value):
 
 def parser():
     p = argparse.ArgumentParser(prog="sawm-defense", description="SAWM Defense — application et agent CLI")
-    p.add_argument("--version", action="version", version="SAWM Defense 0.2.0")
+    p.add_argument("--version", action="version", version=f"SAWM Defense {__version__}")
     p.add_argument("--state-dir", type=Path, help="Profil local distinct (configuration, journal et file Cloud)")
     sub = p.add_subparsers(dest="command")
     sub.add_parser("gui", help="Ouvrir l'application")

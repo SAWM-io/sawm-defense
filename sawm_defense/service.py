@@ -12,6 +12,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from contextlib import contextmanager
+from . import __version__
 
 from .config import ConfigManager, default_state_dir, validate_config
 from .storage import Store
@@ -696,7 +697,7 @@ class AgentService:
         target = Path(path).expanduser()
         if not no_symlink(target.absolute()):
             raise ValueError("Rapport : les liens symboliques sont exclus.")
-        report = {"generated_at": utc(), "version": "0.2.0", **self.status()}
+        report = {"generated_at": utc(), "version": __version__, **self.status()}
         report["journal"] = self.store.verify_chain()
         if target.suffix.lower() == ".json":
             text = json.dumps(report, ensure_ascii=False, indent=2)

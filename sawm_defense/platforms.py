@@ -72,6 +72,8 @@ class Collector:
         self._process_identities = set()
         self._last_alert = {}
         self._denied_network = False
+        self._denied_processes = False
+        self._incomplete_processes = False
 
     def update_config(self, config):
         with self._lock:
@@ -87,8 +89,13 @@ class Collector:
         return [
             {"name": "Fichiers sélectionnés", "available": True,
              "reason": "Sondage borné, sans liens symboliques ; les changements entre deux sondages peuvent échapper."},
-            {"name": "CPU, RAM et processus", "available": psutil is not None,
-             "reason": "Lecture utilisateur ; certains processus restent protégés." if psutil else "Dépendance psutil absente."},
+            {"name": "CPU et RAM", "available": psutil is not None,
+             "reason": "Mesures disponibles avec les droits du compte." if psutil else "Dépendance psutil absente."},
+            {"name": "Processus", "available": psutil is not None and not self._denied_processes,
+             "reason": "Dépendance psutil absente." if not psutil else
+                       "Énumération indisponible ou interrompue ; les autres capteurs continuent." if self._denied_processes else
+                       "Liste partielle : limite atteinte ou processus protégés ; historique conservé." if self._incomplete_processes else
+                       "Lecture utilisateur ; certains processus peuvent rester protégés."},
             {"name": "Connexions réseau", "available": psutil is not None and not self._denied_network,
              "reason": "Connexions accessibles à cet utilisateur ; aucune capture du contenu des paquets."},
             {"name": "Surveillance noyau exhaustive", "available": False,
@@ -184,27 +191,48 @@ class Collector:
             allowed_processes = set(self.config.get("allowed_process_paths", []))
             observed_processes = set()
             hashes_left = 2
-            for process in psutil.process_iter(["pid", "name", "username", "create_time", "exe"]):
-                if len(processes) >= self.MAX_PROCESSES:
-                    break
-                try:
-                    info = dict(process.info)
-                    processes.append(info)
-                    identity = (info["pid"], info.get("create_time"))
-                    observed_processes.add(identity)
-                    if info.get("exe") in allowed_processes and identity not in self._process_identities and hashes_left:
-                        hashes_left -= 1
-                        try:
-                            digest, _ = file_digest(Path(info["exe"]), 32 * 1024 * 1024)
-                            events.append({"kind": "process_observed", "severity": "info", "summary": "Processus autorisé observé",
-                                           "details": {**info, "exe_sha256": digest, "malware_proven": False}})
-                            self._process_identities.add(identity)
-                        except (OSError, ValueError):
-                            pass
-                except (psutil.AccessDenied, psutil.NoSuchProcess):
-                    denied += 1
+            process_complete = True
+            process_error = None
+            process_truncated = False
+            self._denied_processes = False
+            try:
+                # process_iter can fail while being created or only on next().
+                # Keep the failure local to this sensor, including partial lists.
+                for process in psutil.process_iter(["pid", "name", "username", "create_time", "exe"]):
+                    if len(processes) >= self.MAX_PROCESSES:
+                        process_complete = False
+                        process_truncated = True
+                        break
+                    try:
+                        info = dict(process.info)
+                        processes.append(info)
+                        identity = (info["pid"], info.get("create_time"))
+                        observed_processes.add(identity)
+                        if info.get("exe") in allowed_processes and identity not in self._process_identities and hashes_left:
+                            hashes_left -= 1
+                            try:
+                                digest, _ = file_digest(Path(info["exe"]), 32 * 1024 * 1024)
+                                events.append({"kind": "process_observed", "severity": "info", "summary": "Processus autorisé observé",
+                                               "details": {**info, "exe_sha256": digest, "malware_proven": False}})
+                                self._process_identities.add(identity)
+                            except (OSError, ValueError):
+                                pass
+                    except (psutil.AccessDenied, psutil.NoSuchProcess, OSError):
+                        denied += 1
+                        process_complete = False
+            except (psutil.AccessDenied, psutil.NoSuchProcess, OSError) as error:
+                process_error = type(error).__name__
+                process_complete = False
+                self._denied_processes = True
+            self._incomplete_processes = not process_complete
             coverage["process_access_denied"] = denied
-            self._process_identities.intersection_update(observed_processes)
+            coverage["process_scan_complete"] = process_complete
+            coverage["processes_truncated"] = process_truncated
+            if process_error:
+                coverage["process_enumeration_error"] = process_error
+            if process_complete:
+                # Absence from a partial/denied sample is not a disappearance.
+                self._process_identities.intersection_update(observed_processes)
             try:
                 raw = psutil.net_connections(kind="inet")
                 self._denied_network = False

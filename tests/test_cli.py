@@ -1,10 +1,21 @@
 """Structured CLI output remains usable with redirected legacy OS encodings."""
 import io
 import json
+from pathlib import Path
+import tomllib
 
 import pytest
 
 from sawm_defense.cli import emit
+
+
+def test_cli_and_distribution_versions_match(capsys):
+    from sawm_defense.cli import parser
+    with pytest.raises(SystemExit) as stopped:
+        parser().parse_args(["--version"])
+    assert stopped.value.code == 0
+    version = tomllib.loads((Path(__file__).resolve().parents[1] / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
+    assert capsys.readouterr().out.strip() == f"SAWM Defense {version}"
 
 
 @pytest.mark.parametrize("encoding", ["ascii", "cp1252", "utf-8"])
