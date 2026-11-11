@@ -1,44 +1,76 @@
-# Validation — 11 novembre 2026
+# Validation — SAWM Defense 0.2
 
-## Résultats vérifiés
+État documentaire : **11 novembre 2026**. Ce fichier distingue les contrôles du code, les opérations réellement exécutées et les validations natives restant à compléter. Il ne transforme pas la réussite d’un test avec fournisseur simulé en réussite d’un appel Cloud réel.
 
-**92 tests réussis** sur macOS Apple Silicon, Python 3.12.14 et Tk 9.0.4.
+## Périmètre de la campagne locale
 
-Les essais couvrent :
-
-- Création/modification/suppression de vrais fichiers temporaires, empreintes SHA256 et exclusion des liens symboliques.
-- Vraie quarantaine et restauration d’un fichier inoffensif. La détection utilisée pour ce test est une fixture contrôlée ; ce n’est pas un test sur malware réel.
-- Arrêt réel d’un sous-processus de test autorisé, refus d’un PID périmé ou d’une cible hors périmètre.
-- Persistance après redémarrage, file Cloud idempotente, file de scans de 120 événements et absence d’effacement de leur preuve pendant la rétention.
-- Panne et reprise Cloud, réponses incomplètes, ACK partiel, quotas concurrents.
-- Révocation d’une permission et du partage de contexte depuis une autre instance, clés séparées par destination et rotation de clé.
-- Refus de commandes arbitraires, de cibles inventées et d’une action automatique fondée seulement sur un pic CPU.
-- Intégrité du journal, export HTML échappé, absence de clé dans les rapports et la configuration.
-- Interface Tk construite et contrôlée ; travaux hors du thread graphique et annulation d’une action humaine respectée.
-
-L’application Mac construite avec PyInstaller a été ouverte visuellement : formulaire de configuration, démarrage et arrêt, mesures CPU/RAM changeantes et graphe réel contrôlés.
-
-## Niveau des preuves Cloud et plateformes
-
-Les tests Cloud emploient **le vrai SDK public** avec `httpx.MockTransport`. Ils vérifient les requêtes, l’idempotence, TSST, ODVL et les réponses SAWM. Aucun compte client ni clé réelle n’a été utilisé dans cette campagne : une validation Cloud réelle de cette nouvelle application reste à faire après sa configuration.
-
-Les règles UFW, Windows Firewall et les services de démarrage sont testés par contrôles et commandes simulées. Aucun pare-feu ni service permanent du poste de développement n’a été modifié. Windows et Linux nécessitent une campagne native avant distribution industrielle.
-
-Aucun résultat ne démontre une couverture complète des malwares, une résistance à root hostile, une interception universelle des téléchargements ou une certification réglementaire.
-
-## Reproduire
+L’environnement de développement est macOS Apple Silicon, Python 3.12.14 et Tk 9.0.4. La suite se lance avec :
 
 ```bash
 python -m pytest -q
-python -m sawm_defense --state-dir /chemin/jetable doctor
-python -m sawm_defense --state-dir /chemin/jetable watch --seconds 10
-python packaging/build.py
 ```
 
-## Exécutable Mac autonome
+La campagne locale 0.2 a réussi **193 tests**. Bandit ne relève aucune alerte de sévérité moyenne ou élevée. Le [contrôle du paquet Mac 0.2](packaged-macos-validation-0.2.json) vérifie le CLI réellement construit : modification/suppression de fichier, quarantaine manuelle et restauration, détection structurelle automatique d’un script de test déguisé en PDF, alerte persistante et exécution d’une mission de rapport par le service. Le moteur antivirus était absent et le Cloud désactivé ; le fichier suspect n’a pas été supprimé sur la seule base de l’heuristique.
 
-Le CLI du paquet `.app` a également été exécuté hors du code source sur un profil temporaire : modification et suppression détectées, quarantaine manuelle puis restauration réelles, 6 événements et 2 actions enregistrés, journal valide et rapport HTML exporté. Aucun Cloud, moteur antivirus réel ni pare-feu n'a été utilisé dans cet essai.
+L’interface 0.2 a également été ouverte et observée : veille active, graphe des ressources et onglet Veille & missions. Le signal d’absence d’antivirus est regroupé par changement d’état pour éviter une alerte identique à chaque fichier. Les fonctions privilégiées ne sont pas déduites de cette vérification visuelle.
 
-Preuve structurée : [packaged-macos-validation.json](packaged-macos-validation.json).
+Le total exact doit être lu dans la sortie de la campagne correspondant au commit livré. Il n’est pas repris d’une version précédente. Les contrôles GUI utilisent de vrais widgets Tk dans un sous-processus isolé ; les assertions de service sont injectées pour ne pas modifier les permissions du poste.
 
-Une analyse statique Bandit a été effectuée : aucune alerte moyenne ou élevée restante dans le code du client. Les appels système contrôlés restent des points de revue explicites ; ce résultat ne constitue pas une certification.
+| Partie | Nature des preuves | Interprétation |
+| --- | --- | --- |
+| Fichiers et journal | Fichiers temporaires réels, création/modification/suppression, empreintes, rétention et chaîne locale | Valide ces chemins logiciels dans le périmètre temporaire |
+| Quarantaine et restauration | Opérations réelles sur fichiers inoffensifs ; détection contrôlée pour les scénarios | Ne constitue pas une campagne sur malwares réels |
+| Processus | Sous-processus de test autorisé et vérification d’identité, refus hors périmètre | Ne prouve pas la sûreté de l’arrêt de tous les services d’entreprise |
+| Cloud / SDK public | `httpx.MockTransport`, contrat des requêtes, échecs, budget, TSST/ODVL et réponses SAWM contrôlées | Aucun compte client ni clé réelle dans cette campagne locale |
+| Interface native | Widgets réels, appels hors du thread graphique, missions typées, accusé de lecture, refus de permission annulée et démarrage unique | Ne prouve pas la livraison d’un toast sur toutes les versions des OS |
+| Commandes OS | Arguments et contrôles examinés sans appliquer les règles au pare-feu du poste | UFW, Windows Firewall, services et règles d’audit nécessitent une campagne native |
+| Analyse de fichiers | Fichiers de contrôle, limites, en-têtes/structures et résultats distincts des signatures antivirus | Aucun indicateur reconnu n’équivaut pas à absence de malware |
+
+Les tests spécifiques de la version 0.2 portent sur les notifications et leur persistance, les missions et leur reprise, l’analyse autonome, l’origine des journaux SSH, les permissions et les téléchargements. Chaque compte rendu doit préciser ce qui a réellement été exécuté au commit évalué, et conserver les échecs ou fonctions non exercées.
+
+## Autonomie : critères de validation
+
+- Une observation arrive sans dialogue préalable ; une alerte est enregistrée et sa notification est tentée selon les réglages.
+- Notification soumise au système, notification visible et notification lue sont trois faits distincts.
+- Une analyse Cloud lente ne bloque pas les échantillons locaux. Une panne, un budget épuisé ou une réponse invalide restent des états explicites.
+- Une mission persiste avec son identifiant, sa demande, son acteur et son résultat. Une action interrompue au résultat incertain ne doit pas être relancée aveuglément.
+- Une permission révoquée ou une cible devenue différente entraîne un refus au moment d’agir.
+- Un texte hostile dans un fichier, un log ou un rappel ne devient pas une instruction à exécuter.
+- Une preuve antivirus valide est distincte d’un indice de fichier suspect. Un pic CPU seul n’autorise pas un arrêt.
+- Des échecs SSH sous le seuil, une IP protégée et un log non fiable ne doivent pas conduire au même traitement qu’une source système attribuée dépassant le seuil.
+- Les interventions refusées et les échecs apparaissent avec leur raison, pas comme des réussites.
+- La pause utilisateur reste effective malgré les rafraîchissements de l’interface.
+
+## Reproduire sans compte Cloud réel
+
+Utilisez un profil jetable et des fichiers de contrôle inoffensifs. N’accordez pas de nouvelle permission d’action pour faire un simple contrôle de disponibilité :
+
+```bash
+python -m pytest tests/test_gui.py tests/test_notifications.py tests/test_orders.py -q
+python -m sawm_defense --state-dir /chemin/jetable doctor
+python -m sawm_defense --state-dir /chemin/jetable kernel plan
+python -m sawm_defense --state-dir /chemin/jetable watch --seconds 10
+python -m sawm_defense --state-dir /chemin/jetable status
+python -m sawm_defense --state-dir /chemin/jetable notifications
+python -m sawm_defense --state-dir /chemin/jetable orders
+```
+
+Les commandes `watch` et `doctor` lisent ce que le profil autorise réellement, notamment Téléchargements si l’option est activée. Pour un laboratoire entièrement isolé, désactivez cette option et définissez uniquement un dossier de test. `kernel plan` est informatif ; `kernel install --approve` modifie le système et appartient à une campagne Linux autorisée.
+
+## Paquets natifs et preuves antérieures
+
+La campagne **0.1** a ouvert visuellement l’application macOS construite avec PyInstaller : configuration, démarrage/arrêt, mesures et graphe CPU/RAM. Le CLI du paquet a réellement détecté des changements de fichiers temporaires, mis un fichier inoffensif en quarantaine, restauré ce fichier et exporté un rapport avec journal valide.
+
+L’artefact [packaged-macos-validation.json](packaged-macos-validation.json) appartient à cette campagne antérieure. Il **ne valide pas automatiquement les nouvelles fonctions 0.2** ni un paquet non reconstruit. La construction 0.2 doit être lancée avec `python packaging/build.py`, puis son CLI et son interface vérifiés à nouveau.
+
+L’analyse Bandit antérieure ne remplace pas l’analyse du commit courant. Les commandes système restent des points de revue, y compris lorsqu’elles sont légitimes et bornées.
+
+## À valider sur les environnements clients
+
+1. **Cloud réel** : espace dédié, clé minimale, consentement, TSST/ODVL, dépôt, rappel, analyse SAWM, budget, panne et reprise ; aucun résultat de transport simulé ne remplace cet essai.
+2. **Linux natif** : source SSH réellement attribuée, règles d’audit, UFW dans son état initial connu, blocage temporaire et retrait, accès d’administration protégé, notifications selon session.
+3. **Windows natif** : intégration Defender et résultats ambigus, Windows Firewall, notifications, tâche planifiée et refus des permissions absentes.
+4. **macOS natif** : disponibilités réseau selon droits, notifications système, ClamAV si installé, inspection des fichiers, profil et démarrage supervisé.
+5. **Exploitation** : volume d’événements, latence, stockage pendant panne prolongée, consommation Cloud, faux positifs, restauration et service légitime préservé.
+
+Aucun résultat local ne démontre une détection universelle des malwares, une résistance à un administrateur ou noyau hostile, l’interception de chaque téléchargement avant son exécution ou la certification ISO d’une organisation. Le dossier [ISO 27001 / CIS](ISO27001-CIS.md) décrit les contributions techniques et les preuves attendues.

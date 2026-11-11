@@ -2,6 +2,8 @@ import hashlib
 import os
 import subprocess
 import sys
+import time
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -151,3 +153,160 @@ def test_ufw_foreign_rule_is_not_reused_or_deleted(setup, monkeypatch):
     result = executor.execute("block_ip", {"details": {"remote_ip": "93.184.216.34"}}, config)
     assert result["status"] == "denied"
     assert commands == [["/usr/sbin/ufw", "status"]]
+
+
+def firewall_stub(executor, monkeypatch, *, mode="normal"):
+    """Native helper witness only: no actual firewall or networking mutation."""
+    monkeypatch.setattr(actions.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(executor, "_admin", lambda: True)
+    monkeypatch.setattr(actions.socket, "getaddrinfo", lambda *a: [(None, None, None, None, ("1.2.3.4", 443))])
+    monkeypatch.setattr(actions.shutil, "which", lambda name: "/usr/sbin/ufw")
+    real_read = Path.read_text
+    monkeypatch.setattr(Path, "read_text", lambda path, **kw: "nameserver 8.8.8.8\n" if path.as_posix() == "/etc/resolv.conf" else real_read(path, **kw))
+    state = {"rules": {}, "calls": [], "mode": mode}
+    def run(cmd, **kwargs):
+        state["calls"].append(cmd)
+        if cmd[1:] == ["status"]:
+            text = "Status: active\nTo                         Action      From\n--                         ------      ----\n"
+            for direction, (ip, name) in state["rules"].items():
+                text += (f"Anywhere                   DENY IN     {ip} # {name}\n" if direction == "in" else f"{ip}      DENY OUT    Anywhere # {name}\n")
+            return SimpleNamespace(returncode=0, stdout=text)
+        assert "deny" in cmd and "comment" in cmd and not kwargs.get("shell")
+        direction = "in" if "in" in cmd else "out"
+        ip = cmd[cmd.index("from")+1] if direction == "in" else cmd[cmd.index("to")+1]
+        name = cmd[cmd.index("comment")+1]
+        if "delete" in cmd:
+            if state["mode"] != "cannot_remove":
+                state["rules"].pop(direction, None)
+        elif not (state["mode"] == "ignore_out" and direction == "out"):
+            state["rules"][direction] = (ip,name)
+            if state["mode"] == "timeout" and direction == "in":
+                raise subprocess.TimeoutExpired(cmd, 10)
+        return SimpleNamespace(returncode=0, stdout="ok")
+    monkeypatch.setattr(actions.subprocess, "run", run)
+    return state
+
+
+def auth_event():
+    return {"id": "ssh-burst", "kind": "auth_bruteforce", "timestamp": actions.utc_now(), "details": {
+        "remote_ip": "93.184.216.34", "verified_local": True, "verification_origin": "local_journald",
+        "source_kind": "journald", "failure_count": 5, "window_seconds": 300,
+        "last_failure_at": actions.utc_now(), "evidence_ids": [str(i) for i in range(5)],
+        "producer": {"_UID":"0","_COMM":"sshd","_EXE":"/usr/sbin/sshd","_TRANSPORT":"syslog"}}}
+
+
+def test_verified_ssh_autoblock_has_durable_expiry_and_verified_rollback(setup, monkeypatch):
+    executor, config, _, _ = setup
+    config.update({"_automatic_response": True,"autoblock_auth_ips": True,"auto_block_seconds": 120})
+    state = firewall_stub(executor,monkeypatch)
+    result = executor.execute("block_ip",auth_event(),config)
+    assert result["status"] == "completed" and result["verified"]
+    assert 110 < result["expires_at"] - time.time() <= 120
+    disk = json.loads((executor.receipts / (result["receipt_id"]+".json")).read_text())
+    assert disk["expires_at"] == result["expires_at"]
+    assert set(state["rules"]) == {"in","out"}
+    assert executor.rollback(result,config)["status"] == "completed"
+    assert not state["rules"]
+    # Replaying removal after restart is idempotent and verified.
+    assert executor.rollback(result,config)["status"] == "completed"
+
+
+def test_text_spoofed_ssh_cannot_use_auto_scope(setup,monkeypatch):
+    executor,config,_,_ = setup
+    config.update({"_automatic_response":True,"autoblock_auth_ips":True})
+    event=auth_event()
+    event["details"]["verification_origin"]="untrusted_auth_text"
+    monkeypatch.setattr(actions.subprocess,"run",lambda *a,**k: pytest.fail("Forged evidence must not touch firewall"))
+    assert executor.execute("block_ip",event,config)["status"]=="denied"
+
+
+def test_protected_ip_beats_manual_and_auto_grants(setup):
+    executor,config,_,_=setup
+    config.update({"allowed_remote_ips":["93.184.216.34"],"protected_remote_ips":["93.184.216.34"]})
+    assert executor.execute("block_ip",auth_event(),config)["status"]=="denied"
+    config.update({"_automatic_response":True,"autoblock_auth_ips":True})
+    assert executor.execute("block_ip",auth_event(),config)["status"]=="denied"
+
+
+def test_auto_optin_does_not_bypass_manual_ip_scope(setup):
+    executor,config,_,_=setup
+    config["autoblock_auth_ips"]=True
+    assert executor.execute("block_ip",auth_event(),config)["status"]=="denied"
+
+
+@pytest.mark.parametrize("mode", ["ignore_out","timeout"])
+def test_native_zero_exit_or_timeout_not_success_without_two_rules(setup,monkeypatch,mode):
+    executor,config,_,_=setup
+    config["allowed_remote_ips"]=["93.184.216.34"]
+    state=firewall_stub(executor,monkeypatch,mode=mode)
+    result=executor.execute("block_ip",auth_event(),config)
+    assert result["status"]=="error"
+    assert result["receipt_id"] and (executor.receipts/(result["receipt_id"]+".json")).exists()
+    assert result["rollback_verified"] is True
+    assert not state["rules"]
+
+
+def test_rollback_failed_native_removal_is_visible(setup,monkeypatch):
+    executor,config,_,_=setup
+    config["allowed_remote_ips"]=["93.184.216.34"]
+    state=firewall_stub(executor,monkeypatch)
+    receipt=executor.execute("block_ip",auth_event(),config)
+    state["mode"]="cannot_remove"
+    result=executor.rollback(receipt,config)
+    assert result["status"]=="error" and result["verified"] is False
+    assert result["receipt_id"]==receipt["receipt_id"]
+
+
+def test_ufw_shape_requires_address_direction_and_exact_comment():
+    name="SAWM-"+"a"*32
+    assert actions._ufw_present(f"Anywhere DENY 93.184.216.34 # {name}\n93.184.216.34 DENY OUT Anywhere # {name}",name,"93.184.216.34")=={"in","out"}
+    assert not actions._ufw_present(f"Anywhere ALLOW IN 93.184.216.34 # {name}\nAnywhere DENY IN 93.184.216.35 # {name}",name,"93.184.216.34")
+    assert not actions._ufw_present(f"Anywhere DENY IN 93.184.216.34 # {name}-other",name,"93.184.216.34")
+
+
+def test_windows_rule_verification_requires_exact_fields():
+    name="SAWM-"+"b"*32
+    good=f"Rule Name: {name}-in\nEnabled: Yes\nDirection: In\nAction: Block\nLocalIP: Any\nRemoteIP: 93.184.216.34/32\nProtocol: Any\n"
+    assert actions._netsh_present(good,name,"93.184.216.34","in")
+    assert not actions._netsh_present(good.replace("93.184.216.34/32","93.184.216.0/24"),name,"93.184.216.34","in")
+    assert not actions._netsh_present(good.replace("Block","Allow"),name,"93.184.216.34","in")
+    assert not actions._netsh_present("Ok.",name,"93.184.216.34","in")
+
+
+def test_windows_native_rule_roundtrip_uses_scoped_argv(setup,monkeypatch):
+    executor,config,_,_=setup
+    config["allowed_remote_ips"]=["93.184.216.34"]
+    monkeypatch.setattr(actions.platform,"system",lambda:"Windows")
+    monkeypatch.setattr(executor,"_admin",lambda:True)
+    monkeypatch.setattr(actions.socket,"getaddrinfo",lambda *a:[(None,None,None,None,("1.2.3.4",443))])
+    installed={}
+    commands=[]
+    def run(cmd,**kwargs):
+        commands.append(cmd)
+        assert not kwargs.get("shell")
+        if cmd[0]=="powershell.exe":
+            return SimpleNamespace(returncode=0,stdout="8.8.8.8\n")
+        if cmd[1:]==["advfirewall","show","allprofiles","state"]:
+            return SimpleNamespace(returncode=0,stdout="State ON\nState ON\nState ON\n")
+        assert cmd[:3]==["netsh","advfirewall","firewall"]
+        name=next(item[5:] for item in cmd if item.startswith("name="))
+        direction=name.rsplit("-",1)[1]
+        if cmd[3]=="add":
+            assert "remoteip=93.184.216.34" in cmd and "action=block" in cmd
+            installed[name]=direction
+            return SimpleNamespace(returncode=0,stdout="Ok.\n")
+        if cmd[3]=="delete":
+            installed.pop(name,None)
+            return SimpleNamespace(returncode=0,stdout="Ok.\n")
+        assert cmd[3]=="show"
+        if name not in installed:
+            return SimpleNamespace(returncode=1,stdout="No rules match the specified criteria.\n")
+        return SimpleNamespace(returncode=0,stdout=f"Rule Name: {name}\nEnabled: Yes\nDirection: {direction}\nAction: Block\nLocalIP: Any\nRemoteIP: 93.184.216.34/32\nProtocol: Any\n")
+    monkeypatch.setattr(actions.subprocess,"run",run)
+    receipt=executor.execute("block_ip",auth_event(),config)
+    assert receipt["status"]=="completed" and receipt["verified"]
+    assert len(installed)==2
+    result=executor.rollback(receipt,config)
+    assert result["status"]=="completed" and result["verified"]
+    assert not installed
+    assert all("all" not in cmd for cmd in commands)

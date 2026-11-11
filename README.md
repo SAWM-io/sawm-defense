@@ -1,33 +1,46 @@
 # SAWM Defense
 
-**Une application de défense pour les postes de travail, le même agent en CLI pour les serveurs.**
+[![Tests et paquets](https://github.com/SAWM-io/sawm-defense/actions/workflows/build.yml/badge.svg)](https://github.com/SAWM-io/sawm-defense/actions/workflows/build.yml)
 
-SAWM Defense relie les observations locales à **SAWM Cloud**, à la mémoire **Basira**, au rappel **TSST** et au classement **ODVL**. L’utilisateur configure son espace, sa clé et les interventions autorisées. Les moteurs privés ne sont pas distribués dans ce client.
+[Télécharger la version pilote](https://github.com/SAWM-io/sawm-defense/releases) · [Guide pas à pas](docs/INTERFACE.md) · [Serveurs / CLI](docs/CLI.md)
 
-Version **0.1.0 — pilote logiciel**. Application macOS construite et vérifiée localement ; installateurs source Linux/Windows et construction native par CI fournis. Les commandes pare-feu et services Windows/Linux demandent encore une validation sur ces systèmes. Ce client n’est pas une certification antivirus ou un EDR noyau exhaustif.
+**Votre agent surveille, signale et intervient dans les limites que vous lui confiez.**
 
-## Ce que fait l’application
+Une application de défense pour **macOS, Linux et Windows**, le même service en **CLI pour les serveurs**. SAWM Defense relie les observations du poste à **SAWM Cloud**, à la mémoire **Basira**, au rappel **TSST** et au classement **ODVL**. Configurez votre espace et vos autorisations : la veille fonctionne ensuite sans attendre une question dans le chat.
 
-- Tableau de bord natif, CPU/RAM, processus, connexions accessibles et graphique d’activité.
-- Dossiers choisis : création, modification et suppression, empreintes SHA256, limites de couverture visibles.
-- Inventaire des applications installées ; analyse de fichiers avec **ClamAV** ou **Microsoft Defender**, lorsqu’ils sont disponibles.
-- Détection antivirus locale confirmée → quarantaine automatique si l’utilisateur l’autorise → restauration explicite.
-- Proposition de SAWM → vérification locale des droits, de la preuve et de la cible → intervention ou demande de validation.
-- Arrêt ciblé d’un processus autorisé et blocage ciblé d’une IP autorisée, avec confirmation humaine. Pas de commande shell produite par un LLM.
-- Dialogue avec SAWM, précédents rappelés par TSST et classement ODVL consultatif ; le chat ne peut pas autoriser une action.
-- Journal persistant, appels Cloud, consommation en jetons lorsque l’API la fournit, rapports HTML/JSON.
-- File Cloud idempotente et file de scans persistantes. Sans Cloud, les capteurs et la quarantaine autorisée continuent ; les transmissions attendent la reprise.
-- Service utilisateur au démarrage, activé volontairement depuis l’interface ou la CLI.
+**Version 0.2.0 — pilote logiciel.** Le code de collecte, d’analyse et de contrôle est commun à l’application et à la CLI. Le client utilise les API publiques : les moteurs privés SAWM, Basira, TSST et ODVL ne sont pas distribués. La matrice de couverture ci-dessous distingue les essais macOS des validations Linux/Windows encore nécessaires.
 
-La résilience concerne **la surveillance et la livraison des observations**. Le programme ne répare pas une liaison physique coupée et ne promet pas une protection contre un administrateur hostile.
+## Ce que l’agent fait pour vous
+
+- **Veiller en continu** : fichiers, processus, connexions visibles et consommation CPU/RAM, avec état réel des capteurs et limites de couverture.
+- **Examiner les téléchargements** : repérer les fichiers nouveaux ou modifiés, attendre leur stabilité, inspecter leur structure et appeler l’antivirus local lorsqu’il existe.
+- **Inspecter même sans antivirus** : caractéristiques du fichier, en-têtes, type réel, métadonnées, archives et informations de signature disponibles. Un résultat douteux produit une alerte, pas une déclaration infondée de malware.
+- **Relier les signaux** : suivre les événements, retrouver les précédents autorisés avec Basira/TSST, les classer avec ODVL et faire analyser les alertes par SAWM en arrière-plan.
+- **Alerter sans demande préalable** : boîte de notifications persistante et notification native du système. Livraison, échec et accusé de lecture restent distincts.
+- **Intervenir selon votre mandat** : quarantaine, arrêt ciblé et blocage IP, soumis à des preuves locales vérifiées, des cibles attribuées et vos périmètres. Vous choisissez séparément les interventions automatiques.
+- **Repérer les tentatives SSH répétées** : seuil et fenêtre temporelle, provenance du journal, adresses protégées ; blocage temporaire possible à partir d’une source Linux fiable et d’une autorisation explicite.
+- **Recevoir des missions** : scan, inventaire, analyse, rapport ; file persistante, identité de la session demandeuse, état et résultat. Les actions et restaurations passent par le même contrôle local.
+- **Expliquer et rendre compte** : dialogue SAWM, journal d’actions, refus, reçus Cloud, jetons lorsque fournis et exports HTML/JSON.
+- **Continuer localement pendant une panne Cloud** : observations et tâches restent conservées ; la collecte et les protections locales autorisées ne dépendent pas d’une réponse immédiate du modèle.
+
+La résilience concerne la surveillance et la livraison des observations. Le programme ne répare pas une liaison physique coupée. Une détection antivirus vérifiée est distincte d’un indice structurel ou d’une hypothèse SAWM.
 
 ## Installer
 
+**Le chemin le plus simple :** sur Mac Apple Silicon, téléchargez le DMG dans les [versions publiées](https://github.com/SAWM-io/sawm-defense/releases). Sur Linux ou Windows, téléchargez et décompressez l’archive des sources, puis lancez l’installateur ci-dessous depuis ce dossier. Vous pouvez aussi récupérer les sources avec Git :
+
+```bash
+git clone https://github.com/SAWM-io/sawm-defense.git
+cd sawm-defense
+```
+
+Au premier lancement, la veille locale et l’inspection des téléchargements démarrent. **Aucune intervention ni transmission Cloud n’est autorisée par défaut.** Ouvrez **Réglages** pour connecter votre compte, choisir les dossiers et autoriser les actions souhaitées ; **Veille & missions** présente les alertes et les tâches.
+
 ### macOS Apple Silicon
 
-Ouvrir le DMG et glisser **SAWM Defense.app** dans Applications. Pour un pilote interne, le paquet est signé ad hoc, sans notarisation Apple : une distribution commerciale devra être signée avec un certificat Developer ID et notarisée.
+Ouvrez le DMG correspondant à la version publiée et glissez **SAWM Defense.app** dans Applications. Les paquets de pilote sont signés ad hoc ; une distribution commerciale nécessite Developer ID et notarisation Apple. Les nouveaux fichiers source ne mettent pas à jour automatiquement un ancien DMG.
 
-La même application fonctionne en terminal :
+Le paquet expose aussi la CLI :
 
 ```bash
 "/Applications/SAWM Defense.app/Contents/MacOS/SAWM Defense" doctor
@@ -36,7 +49,11 @@ La même application fonctionne en terminal :
 
 ### Linux
 
-Python 3.12+, `venv` et Tk doivent être installés. Sur Ubuntu 24.04 :
+**Binaire prêt à lancer, sans Python :** téléchargez l’archive `linux-x86_64.tar.gz` dans les versions, décompressez-la, ouvrez son dossier puis lancez `./sawm-defense/sawm-defense gui` ou `./sawm-defense/sawm-defense watch` pour un serveur. Gardez le dossier `sawm-defense` complet : ses bibliothèques accompagnent l’exécutable. La construction Linux cible Ubuntu 24.04 x86-64 et un système compatible ; ce n’est pas un paquet pour toutes les versions de Linux.
+
+**Installation depuis les sources :**
+
+Python 3.12+, `venv` et Tk sont nécessaires. Exemple Ubuntu 24.04 :
 
 ```bash
 sudo apt install python3 python3-venv python3-tk
@@ -45,19 +62,23 @@ sudo apt install python3 python3-venv python3-tk
 ~/.local/share/sawm-defense-app/sawm-defense watch
 ```
 
-L’installation est limitée à l’utilisateur. Elle ajoute une entrée au menu Applications. Aucune règle pare-feu ni élévation des privilèges n’est déclenchée pendant l’installation.
+L’installation utilisateur crée une entrée au menu Applications. Les droits système et règles pare-feu ne sont pas accordés pendant cette installation. Les capteurs noyau Linux supplémentaires se configurent explicitement ; voir [le guide noyau](docs/KERNEL.md).
 
 ### Windows
 
-Installer Python 3.12 avec Tcl/Tk depuis Python.org, puis lancer :
+**Binaire prêt à lancer, sans Python :** téléchargez l’archive `windows-x86_64.zip` dans les versions, extrayez-la entièrement puis ouvrez `sawm-defense/sawm-defense.exe`. Pour la CLI, lancez ce même exécutable avec `doctor` ou `watch`. Le pilote n’a pas encore de signature Authenticode commerciale.
+
+**Installation depuis les sources :**
+
+Installez Python 3.12 avec Tcl/Tk depuis Python.org, puis :
 
 ```powershell
 powershell -NoProfile -File .\packaging\install-windows.ps1
 ```
 
-Un raccourci **SAWM Defense** est créé dans le menu Démarrer. La CLI se trouve dans `%LOCALAPPDATA%\SAWM Defense App\SAWM Defense.cmd`. Microsoft Defender doit être actif pour son intégration. Son résultat ambigu reste « à examiner » ; aucune détection n’est inventée.
+Le raccourci **SAWM Defense** apparaît dans le menu Démarrer. CLI : `%LOCALAPPDATA%\SAWM Defense App\SAWM Defense.cmd`. L’intégration Microsoft Defender requiert son activation. Une réponse ambiguë du moteur reste à examiner.
 
-### Développement et paquets natifs
+### Depuis les sources
 
 ```bash
 python3.12 -m venv .venv
@@ -69,57 +90,76 @@ python -m pytest -q
 python packaging/build.py
 ```
 
-Le workflow `.github/workflows/build.yml` teste et construit sur macOS, Windows et Linux. PyInstaller doit tourner sur l’OS cible ; un paquet Mac n’est pas un exécutable Windows.
+Le workflow `.github/workflows/build.yml` fournit les constructions natives. PyInstaller doit fonctionner sur l’OS cible ; un paquet Mac n’est pas un exécutable Windows.
 
 ## Première configuration
 
-1. Dans la console [Basira Cloud](https://basira.sawm.io/espace), utiliser un espace et une entité dédiés à la machine. Créer une clé pour ce seul périmètre.
-2. Dans **Réglages**, saisir l’URL, l’espace, l’entité et la clé. Les scopes nécessaires sont `events:write`, `jobs:read`, `memory:recall`, `tsst:recall`, `odvl:rank`, `sawm:run`, avec les droits de lecture/écriture correspondants sur l’entité.
-3. Choisir les dossiers surveillés. Aucun dossier personnel n’est sélectionné par défaut.
-4. Tester la connexion. Ce test confirme TSST et ODVL ; l’écriture et SAWM sont vérifiés à leur utilisation.
-5. Activer le Cloud, puis **séparément** l’envoi des observations si souhaité. Les noms, chemins, empreintes et métadonnées sélectionnés peuvent être transmis. Le contenu brut des fichiers n’est pas envoyé automatiquement.
-6. Choisir les actions et leurs limites. La quarantaine automatique demande un moteur antivirus local et une détection vérifiée. Processus et IP restent soumis à confirmation.
-7. Démarrer la surveillance. Installer le démarrage automatique seulement après cette vérification.
+1. **Veille locale** : vérifiez les chemins et l’option Téléchargements. La surveillance au lancement et l’inspection automatique sont activables indépendamment des interventions. Le Cloud peut rester désactivé.
+2. **Espace Cloud dédié** : dans [Basira Cloud](https://basira.sawm.io/espace), créez une mémoire pour ce poste et une clé limitée à ce périmètre. Les scopes utilisés sont `events:write`, `jobs:read`, `memory:recall`, `tsst:recall`, `odvl:rank`, `sawm:run`, avec les droits correspondants sur l’entité.
+3. **Connexion** : renseignez URL, espace, entité et clé, puis vérifiez l’accès. La vérification TSST/ODVL n’est pas un essai d’écriture ou d’inférence SAWM ; ces opérations sont vérifiées lors de leur utilisation.
+4. **Partage explicite** : activez séparément les fonctions Cloud et l’envoi de métadonnées. Noms, chemins, empreintes et attribution peuvent entrer dans le contexte. Les contenus bruts ne sont pas automatiquement téléversés.
+5. **Mandat d’action** : choisissez les permissions de quarantaine, arrêt et blocage, les cibles autorisées et les exclusions. L’interface confirme l’élargissement des permissions. Une réponse du modèle ne modifie jamais ce mandat.
+6. **Service permanent** : après vérification du comportement, installez volontairement le démarrage supervisé depuis les réglages ou la CLI. Fermer une console ne doit pas être confondu avec arrêter un service séparé.
 
-Les clés sont dans le coffre natif (Trousseau macOS, Credential Manager Windows, Secret Service/KWallet Linux), liées à leur destination Cloud. Sans coffre accessible, une session en mémoire est possible ; aucune clé n’est écrite en clair. Un serveur Linux sans session de coffre doit être configuré avec son administrateur ; une clé de session ne survit pas au redémarrage.
+Les clés résident dans le coffre natif, liées à la destination Cloud. Sans coffre disponible, une clé en mémoire est possible pour une session ; aucune clé n’est écrite en clair. Sur un serveur sans session de coffre, préparez la gestion des secrets avec l’administrateur.
 
-## Fonctionnement
+Pour une session serveur sans coffre natif, configurez d’abord l’espace et l’entité, puis lancez `sawm-defense watch --prompt-key` : la saisie est masquée et la clé reste en mémoire jusqu’à l’arrêt. Elle n’est pas passée en argument ni conservée pour un redémarrage automatique.
+
+## De l’observation à l’action
 
 ```mermaid
 flowchart LR
-    OS[Processus · fichiers · réseau] --> Sensors[Capteurs locaux bornés]
-    Sensors --> Journal[Journal et files persistantes]
-    Journal -->|consentement + budget| Basira[Basira Cloud]
+    OS[Poste ou serveur] --> Sensors[Fichiers · processus · réseau · journaux]
+    Sensors --> Queue[Journal et files persistantes]
+    Queue --> Alerts[Notifications et revue humaine]
+    Queue -->|partage et budget autorisés| Basira[Basira Cloud]
     Basira --> TSST[Rappel TSST]
     TSST --> ODVL[Classement ODVL]
-    ODVL --> SAWM[Analyse et proposition SAWM]
-    SAWM --> Policy[Autorisations locales + preuve + cible]
-    AV[ClamAV / Defender] --> Policy
-    Policy -->|autorisé| Action[Quarantaine · arrêt ciblé · règle IP]
-    Policy -->|preuve insuffisante| Human[À examiner par l’humain]
-    Action --> Journal
+    ODVL --> SAWM[Analyse SAWM en arrière-plan]
+    SAWM --> Policy[Mandat local + preuve actuelle + cible]
+    Local[Antivirus et provenance système] --> Policy
+    Policy -->|autorisé| Action[Quarantaine · arrêt ciblé · blocage temporaire]
+    Policy -->|incertain ou refusé| Alerts
+    Action --> Check[Reçu et vérification du résultat]
+    Check --> Queue
+    Human[Missions utilisateur typées] --> Queue
 ```
 
-Un nom de fichier ou un journal contenant « ignore les règles » reste une donnée. Les faits historiques rappelés ne prouvent pas l’état actuel. Ni le modèle ni un souvenir ne peuvent élargir les droits de l’utilisateur.
+Le modèle aide à analyser. Le système local vérifie l’autorité et exécute les seules opérations prévues. Un texte provenant d’un fichier, d’un journal ou d’une réponse Cloud reste une donnée : il ne devient jamais une commande shell. Un souvenir historique ne prouve pas l’état actuel d’une cible.
 
-## Couverture honnête
+### Télécharger n’est pas exécuter
+
+Le programme inspecte les fichiers observés sur disque. Il ne garantit pas l’interception de chaque téléchargement **avant** écriture ou exécution. Sans antivirus, `no_indicator` signifie « aucun indicateur reconnu dans les contrôles réalisés », pas « fichier sain ». `suspicious` demande une revue ; `incomplete` indique une limite. L’inspection seule ne fournit pas la preuve antivirus exigée pour une intervention automatique destructrice.
+
+## Couverture par système
 
 | Fonction | macOS | Linux | Windows |
-|---|---|---|---|
-| Fichiers sélectionnés, SHA256, CPU/RAM | Code exécuté et testé | Code portable, validation native à poursuivre | Code portable, validation native à poursuivre |
-| Processus et connexions | Selon permissions OS ; réseau parfois refusé | Selon permissions OS | Selon permissions OS |
-| Antivirus | ClamAV installé | ClamAV installé | Defender ou ClamAV installé |
-| Quarantaine/restauration | Test réel sur fichiers temporaires | Implémentation portable | Implémentation portable |
-| Blocage IP ciblé | Non implémenté dans ce pilote | UFW déjà actif + droits administrateur | Pare-feu Windows + droits administrateur |
+| --- | --- | --- | --- |
+| Fichiers sélectionnés, empreintes, CPU/RAM, interface | Essais locaux réels ; voir validation | Code portable, campagne native à compléter | Code portable, campagne native à compléter |
+| Processus et connexions | Selon droits ; certaines mesures réseau peuvent être refusées | Selon droits | Selon droits |
+| Inspection structurelle de fichiers | Contrôles locaux bornés | Contrôles portables | Contrôles portables |
+| Antivirus à signatures | ClamAV s’il est installé | ClamAV s’il est installé | Defender ou ClamAV selon disponibilité |
+| Notifications | Intégration native selon autorisations OS | Service de notifications si disponible ; boîte locale sinon | Intégration native selon environnement ; boîte locale sinon |
+| Quarantaine/restauration | Essais sur fichiers temporaires inoffensifs | Implémentation portable | Implémentation portable |
+| Blocage IP | Non implémenté dans ce pilote | UFW déjà actif et droits adéquats | Pare-feu Windows et droits adéquats |
+| Échecs SSH attribués par source système fiable | Pas de source native équivalente validée | Journal système Linux, activation explicite | Pas de source native équivalente validée |
+| Collecte noyau supplémentaire | Pas d’extension Endpoint Security distribuée | Règles audit Linux sur périmètre choisi ; traces consultables nativement, pas encore importées dans l’application | Pas de pilote noyau distribué |
 | Démarrage utilisateur | LaunchAgent | systemd utilisateur | Tâche planifiée à l’ouverture de session |
-| Pilote noyau, inspection des paquets, root hostile | Non | Non | Non |
 
-Un inventaire ou un hash n’établit pas qu’un logiciel est sain. Un binaire installé ne donne pas automatiquement accès à son code source. Le programme observe les connexions disponibles ; il n’intercepte pas tous les téléchargements avant leur écriture ou leur exécution. La surveillance par sondage peut manquer des opérations très brèves.
+L’agent ne réside pas dans le noyau. Il emploie les interfaces du système selon les permissions. La lecture d’un binaire ne donne pas son code source. Les inventaires, sondages et signatures n’établissent pas une absence universelle de malware ; les opérations très brèves peuvent échapper au sondage.
 
-## Budget, stockage et preuves
+## ISO 27001, CIS et preuves
 
-Le budget par défaut est **4 opérations Cloud par heure**. Une opération peut déclencher plusieurs requêtes HTTP ; chaque appel effectif est journalisé. L’interface présente les jetons fournis par l’API, sans inventer les coûts absents.
+Le dossier [ISO 27001 / CIS](docs/ISO27001-CIS.md) relie les fonctions aux thèmes de contrôle, aux preuves produites et aux obligations restant à assurer dans l’organisation. Références : ISO/IEC 27001:2022 et son amendement de 2024, CIS Controls v8.1. Cette contribution technique n’est pas une certification ISO ni une conformité complète du parc.
 
-La rétention locale par défaut est de 30 jours. Les observations en attente de livraison/analyse sont conservées, donc une longue panne ou un flot d’événements peut augmenter le stockage. Prévoir une supervision du disque en exploitation. Le journal possède une chaîne d’intégrité détectant des modifications incohérentes, pas une preuve inviolable contre un administrateur de la machine. Les quarantaines restent conservées jusqu’à décision humaine.
+Les tests automatisés distinguent les opérations locales réellement exécutées, les API simulées, les commandes OS contrôlées sans exécution et les mesures natives restant à faire. Aucun accès Cloud client réel n’a été utilisé dans la campagne locale de cette application. Consultez [les résultats et la méthode](docs/VALIDATION.md) avant une démonstration commerciale.
 
-Voir [guide CLI](docs/CLI.md), [interface](docs/INTERFACE.md), [architecture et limites](docs/ARCHITECTURE.md) et [validation](docs/VALIDATION.md).
+## Budget, conservation et exploitation
+
+Le budget par défaut est **4 opérations Cloud par heure**. Une opération peut provoquer plusieurs requêtes HTTP ; le journal montre les appels et les jetons réellement fournis. Un budget ou un crédit insuffisant ne doit pas se transformer en succès simulé.
+
+Les observations et tâches en attente sont conservées. Une panne longue ou un flot d’événements peut augmenter le stockage : surveillez l’espace en exploitation. Le journal chaîné détecte des incohérences, mais un journal entièrement local n’est pas inviolable face à l’administrateur de l’hôte. Les quarantaines attendent une décision de restauration ou de traitement.
+
+**Documentation :** [interface](docs/INTERFACE.md) · [CLI](docs/CLI.md) · [interfaces noyau](docs/KERNEL.md) · [architecture](docs/ARCHITECTURE.md) · [ISO/CIS](docs/ISO27001-CIS.md) · [validation](docs/VALIDATION.md).
+
+Le retrait d’un blocage temporaire est réalisé par le service à l’échéance, puis rattrapé à la reprise si nécessaire. Une règle UFW ou Windows peut donc subsister pendant un arrêt de l’agent ; ce délai n’est pas une expiration garantie par le noyau.

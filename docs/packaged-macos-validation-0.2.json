@@ -1,0 +1,28 @@
+{
+  "binary_version": "0.2.0",
+  "platform": "macOS Apple Silicon",
+  "packaged_cli": true,
+  "file_change_detected": true,
+  "manual_quarantine_verified": true,
+  "restore_verified": true,
+  "deletion_detected": true,
+  "bounded_watch_exit_code": 0,
+  "journal_verified": true,
+  "events_recorded": 15,
+  "actions_recorded": 2,
+  "cloud_calls": 0,
+  "report_exported": true,
+  "cloud_enabled": false,
+  "antivirus_engine_available": false,
+  "automatic_file_inspection": true,
+  "download_type_detected": "script",
+  "static_findings": [
+    "extension_type_mismatch",
+    "format_mismatch"
+  ],
+  "persistent_alert": true,
+  "native_notification_delivery": "disabled",
+  "mission_submitted_and_executed_by_daemon": true,
+  "suspicion_did_not_quarantine_without_proof": true,
+  "notes": "Harmless files; no real malware, firewall changes or Cloud credentials."
+}

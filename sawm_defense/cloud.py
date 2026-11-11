@@ -27,6 +27,13 @@ _DETAIL_FIELDS = frozenset({
     "reason", "coverage", "count", "sampled_at", "operation", "event_id", "remote_ip",
     "scan_status", "verification_origin", "action", "action_id", "summary", "uncertainties",
     "execution", "approval", "policy_reason", "restores", "restored_path", "quarantine_path",
+    "static_inspection", "actual_type", "metadata", "findings", "signature", "limitations", "code", "level",
+    "malware_proven", "trusted_program", "note", "signer", "bits", "machine", "sections", "mode",
+    "executable_bit", "provenance", "owner_uid", "download_marker", "download_origins", "prefix_bytes_inspected",
+    "pdf_markers", "archive", "directory_inspected", "entries", "compressed_bytes", "expanded_bytes", "declared_entries",
+    "failure_count", "threshold", "window_seconds", "first_failure_at", "last_failure_at", "source_kind",
+    "sources", "evidence_ids", "producer", "_PID", "_UID", "_COMM", "_EXE", "_TRANSPORT", "attacker_identity_known",
+    "protected_remote_ip", "test_fixture",
 })
 
 
@@ -97,7 +104,7 @@ class CloudBridge:
         output = []
         ids = set()
         def clean(value, depth=0):
-            if depth>3:
+            if depth>6:
                 return None
             if value is None or type(value) is bool:
                 return value

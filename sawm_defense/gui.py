@@ -66,6 +66,9 @@ class DefenseApp:
         self.state_dir = state_dir
         self._service_factory = service_factory
         self.service: Any = None
+        self._created_service: Any = None
+        self._workers: set[threading.Thread] = set()
+        self._workers_lock = threading.Lock()
         self._results: queue.Queue = queue.Queue()
         self._inflight: dict[str, str] = {}
         self._closing = False
@@ -73,6 +76,9 @@ class DefenseApp:
         self._status: dict = {}
         self._event_rows: dict[str, dict] = {}
         self._action_rows: dict[str, dict] = {}
+        self._notification_rows: dict[str, dict] = {}
+        self._order_rows: dict[str, dict] = {}
+        self._launch_checked = False
         self._history: deque = deque(maxlen=100)
         self._last_sample: str | None = None
         self._settings_loaded = False
@@ -84,6 +90,9 @@ class DefenseApp:
         root.minsize(980, 660)
         root.configure(background=BG)
         root.protocol("WM_DELETE_WINDOW", self._close)
+        if sys.platform == "darwin":
+            # The native macOS app menu bypasses WM_DELETE_WINDOW by default.
+            root.createcommand("::tk::mac::Quit", self._close)
         self._build()
         root.after(80, self._drain)
         self._submit("initialize", "Ouverture du journal local", self._create_service, self._initialized)
@@ -112,7 +121,7 @@ class DefenseApp:
         style.configure("Primary.TButton", background=TEXT, foreground=BG, font=(font, 11, "bold"))
         style.map("Primary.TButton", background=[("active", "#d4d4d7"), ("disabled", EDGE)], foreground=[("disabled", SOFT)])
         style.configure("TNotebook", background=BG, borderwidth=0, tabmargins=(0, 10, 0, 10))
-        style.configure("TNotebook.Tab", background=BG, foreground=MUTED, padding=(17, 11))
+        style.configure("TNotebook.Tab", background=BG, foreground=MUTED, padding=(12, 11))
         style.map("TNotebook.Tab", background=[("selected", CARD)], foreground=[("selected", TEXT)])
         style.configure("TEntry", fieldbackground=FIELD, foreground=TEXT, padding=7, insertcolor=TEXT)
         style.configure("TSpinbox", fieldbackground=FIELD, foreground=TEXT, arrowcolor=TEXT, padding=6)
@@ -161,7 +170,7 @@ class DefenseApp:
         self.tabs.grid(row=0, column=0, sticky="nsew")
         self.pages: dict[str, ttk.Frame] = {}
         for key, title in [("overview", "Vue d’ensemble"), ("events", "Observations"),
-                           ("system", "Système"), ("chat", "Parler à SAWM"),
+                           ("system", "Système"), ("autonomy", "Veille & missions"), ("chat", "Parler à SAWM"),
                            ("settings", "Réglages"), ("journal", "Journal")]:
             page = ttk.Frame(self.tabs, padding=(0, 10, 0, 0))
             self.tabs.add(page, text=title)
@@ -169,6 +178,7 @@ class DefenseApp:
         self._overview()
         self._observations()
         self._system()
+        self._autonomy()
         self._chat()
         self._settings()
         self._journal()
@@ -291,6 +301,43 @@ class DefenseApp:
         pane.add(processes, weight=1)
         pane.add(connections, weight=1)
 
+    def _autonomy(self) -> None:
+        page = self.pages["autonomy"]
+        page.columnconfigure(0, weight=1)
+        page.rowconfigure(2, weight=1)
+        ttk.Label(page, text="Une veille continue, des missions suivies", style="Section.TLabel").grid(row=0, column=0, sticky="w")
+        self.autonomy_note = ttk.Label(page, text="Chargement de la veille…", style="Muted.TLabel", wraplength=1100)
+        self.autonomy_note.grid(row=1, column=0, sticky="w", pady=(9, 12))
+        pane = ttk.Panedwindow(page, orient="vertical")
+        pane.grid(row=2, column=0, sticky="nsew")
+        alerts = ttk.Frame(pane)
+        alerts.columnconfigure(0, weight=1)
+        alerts.rowconfigure(1, weight=1)
+        bar = ttk.Frame(alerts)
+        bar.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        self.notification_note = ttk.Label(bar, text="Notifications", style="Section.TLabel")
+        self.notification_note.pack(side="left")
+        ttk.Button(bar, text="Marquer comme lue", command=self._acknowledge_notification).pack(side="right")
+        frame, self.notification_tree = self._tree(alerts, [("time", "Heure", 130), ("severity", "Niveau", 80), ("read", "Lecture", 95), ("delivery", "Notification système", 160), ("summary", "Observation", 510)], 7)
+        frame.grid(row=1, column=0, sticky="nsew")
+        self.notification_tree.bind("<Double-1>", self._show_notification)
+        pane.add(alerts, weight=1)
+        missions = ttk.Frame(pane, padding=(0, 12, 0, 0))
+        missions.columnconfigure(0, weight=1)
+        missions.rowconfigure(2, weight=1)
+        bar = ttk.Frame(missions)
+        bar.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        ttk.Label(bar, text="Confier une mission", style="Section.TLabel").pack(side="left", padx=(0, 12))
+        self.mission_kind = tk.StringVar(value="Inventorier les logiciels")
+        ttk.Combobox(bar, textvariable=self.mission_kind, state="readonly", width=29, values=["Inventorier les logiciels", "Analyser un fichier", "Analyser une observation", "Produire un rapport"]).pack(side="left")
+        ttk.Button(bar, text="Confier →", style="Primary.TButton", command=self._submit_mission).pack(side="left", padx=8)
+        ttk.Button(bar, text="Voir le résultat", command=self._show_order).pack(side="right")
+        ttk.Label(missions, text="Les missions sont persistantes. Une observation s’analyse depuis sa sélection dans Observations. Les interventions restent contrôlées par vos autorisations locales.", style="Muted.TLabel", wraplength=1060).grid(row=1, column=0, sticky="w", pady=(0, 8))
+        frame, self.order_tree = self._tree(missions, [("time", "Demandée à", 130), ("kind", "Mission", 120), ("status", "État", 140), ("actor", "Demandée par", 170), ("detail", "Cible / résultat", 430)], 7)
+        frame.grid(row=2, column=0, sticky="nsew")
+        self.order_tree.bind("<Double-1>", self._show_order)
+        pane.add(missions, weight=1)
+
     def _chat(self) -> None:
         page = self.pages["chat"]
         page.columnconfigure(0, weight=1)
@@ -298,7 +345,7 @@ class DefenseApp:
         ttk.Label(page, text="Demandez une explication, un bilan ou une analyse à votre agent.", style="Section.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 10))
         self.chat_history = self._text(page, height=20)
         self.chat_history.grid(row=1, column=0, sticky="nsew")
-        self._set_text(self.chat_history, "SAWM / ESPACE DE DIALOGUE\n\nConfigurez vos accès Cloud dans Réglages, puis vérifiez la connexion.\nVos questions et les observations sélectionnées par le service sont envoyées à votre espace Basira. Les réponses sont des analyses ; les permissions d’action restent contrôlées localement.\n")
+        self._set_text(self.chat_history, "SAWM / ESPACE DE DIALOGUE\n\nConfigurez vos accès Cloud dans Réglages, puis vérifiez la connexion.\nVos questions et les observations sélectionnées par le service sont envoyées à votre espace Basira. Les réponses expliquent les observations. Confiez une tâche dans Veille & missions ; les permissions d’action restent contrôlées localement.\n")
         ttk.Label(page, text="Ctrl + Entrée pour envoyer · Une réponse de SAWM ne constitue pas une autorisation supplémentaire.", style="Muted.TLabel").grid(row=2, column=0, sticky="w", pady=(10, 6))
         composer = ttk.Frame(page)
         composer.grid(row=3, column=0, sticky="ew")
@@ -359,14 +406,12 @@ class DefenseApp:
         automatic = ttk.LabelFrame(body, text="03  Actions automatiques", padding=15)
         automatic.grid(row=1, column=1, sticky="nsew", padx=(8, 0), pady=(0, 13))
         self.auto_vars: dict[str, tk.BooleanVar] = {}
-        for key, label in [("quarantine", "Quarantaine automatique d’un fichier détecté"), ("terminate", "Processus : confirmation humaine requise"), ("block_ip", "Blocage IP : confirmation humaine requise")]:
+        for key, label in [("quarantine", "Mettre automatiquement en quarantaine"), ("terminate", "Arrêter un exécutable malveillant autorisé"), ("block_ip", "Bloquer une IP selon les preuves autorisées")]:
             var = tk.BooleanVar(value=False)
             self.auto_vars[key] = var
             control = ttk.Checkbutton(automatic, text=label, variable=var)
             control.pack(anchor="w")
-            if key != "quarantine":
-                control.configure(state="disabled")
-        ttk.Label(automatic, text="La quarantaine automatique exige une détection antivirus locale vérifiée et une cible dans son périmètre. Les anomalies seules sont signalées. Processus et IP restent soumis à une confirmation humaine dans cette version.", style="Muted.TLabel", wraplength=390).pack(anchor="w", pady=(10, 0))
+        ttk.Label(automatic, text="Une intervention automatique exige une permission et une preuve locale vérifiée : antivirus pour un fichier ou processus, source d’authentification fiable pour une IP. Un arrêt peut perdre le travail en cours ; un blocage peut interrompre un service. Les seules anomalies sont signalées.", style="Muted.TLabel", wraplength=390).pack(anchor="w", pady=(10, 0))
         restrictions = ttk.LabelFrame(body, text="04  Périmètre des interventions", padding=15)
         restrictions.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(0, 13))
         self.scope_texts: dict[str, tk.Text] = {}
@@ -393,6 +438,44 @@ class DefenseApp:
         ttk.Button(startup, text="Activer au démarrage de session…", command=lambda: self._startup(True)).pack(side="left")
         ttk.Button(startup, text="Désactiver le démarrage…", command=lambda: self._startup(False)).pack(side="left", padx=8)
         ttk.Label(controls, text="Service utilisateur supervisé. Les autorisations système supplémentaires ne sont jamais accordées silencieusement.", style="Muted.TLabel", wraplength=950).grid(row=2, column=0, columnspan=4, sticky="w", pady=(10, 0))
+
+        autonomy = ttk.LabelFrame(body, text="06  Veille autonome & authentification", padding=15)
+        autonomy.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(0, 15))
+        autonomy.columnconfigure(0, weight=1)
+        for index, (key, label, default) in enumerate([
+            ("monitor_on_launch", "Démarrer la veille locale à l’ouverture de l’application", True),
+            ("protect_downloads", "Surveiller aussi le dossier Téléchargements de cette session", True),
+            ("automatic_scan_enabled", "Analyser automatiquement les fichiers nouveaux ou modifiés avec l’antivirus local", True),
+            ("notifications_enabled", "Envoyer les alertes au système de notifications du poste", True),
+            ("autonomous_analysis_enabled", "Analyser les alertes avec SAWM en arrière-plan (budget Cloud respecté)", True),
+            ("auth_journal_enabled", "Lire les événements SSH du journal système Linux, selon les droits disponibles", False),
+            ("autoblock_auth_ips", "Autoriser le blocage temporaire des IP publiques attribuées à des échecs répétés", False),
+        ]):
+            self._vars[key] = tk.BooleanVar(value=default)
+            ttk.Checkbutton(autonomy, text=label, variable=self._vars[key]).grid(row=index, column=0, columnspan=2, sticky="w")
+        ttk.Label(autonomy, text="Le blocage issu du journal exige aussi la permission « Bloquer une IP ». Les IP protégées sont exclues. Les journaux importés manuellement peuvent alerter, mais ne constituent pas une preuve fiable pour bloquer automatiquement.", style="Muted.TLabel", wraplength=1010).grid(row=7, column=0, columnspan=2, sticky="w", pady=(7, 12))
+        inputs = ttk.Frame(autonomy)
+        inputs.grid(row=8, column=0, columnspan=2, sticky="ew")
+        for index, (key, label, value, minimum, maximum) in enumerate([
+            ("auth_failure_threshold", "Échecs avant alerte", 5, 3, 100),
+            ("auth_window_seconds", "Fenêtre d’observation (s)", 300, 30, 3600),
+            ("auto_block_seconds", "Durée du blocage (s)", 600, 60, 3600),
+            ("download_scan_settle_seconds", "Stabilité avant analyse (s)", 3, 1, 120),
+        ]):
+            section = ttk.Frame(inputs)
+            section.grid(row=0, column=index, sticky="ew", padx=(0, 20))
+            inputs.columnconfigure(index, weight=1)
+            ttk.Label(section, text=label, style="Muted.TLabel").pack(anchor="w")
+            self._vars[key] = tk.StringVar(value=str(value))
+            ttk.Spinbox(section, from_=minimum, to=maximum, textvariable=self._vars[key], width=12).pack(anchor="w", pady=(6, 0))
+        for index, (key, label) in enumerate([
+            ("auth_log_paths", "Journaux d’authentification à observer · chemins complets, un par ligne"),
+            ("protected_remote_ips", "IP à protéger du blocage · adresses exactes, une par ligne"),
+        ]):
+            ttk.Label(autonomy, text=label, style="Muted.TLabel").grid(row=9+2*index, column=0, columnspan=2, sticky="w", pady=(13, 5))
+            widget = self._text(autonomy, height=3, readonly=False)
+            widget.grid(row=10+2*index, column=0, columnspan=2, sticky="ew")
+            self.scope_texts[key] = widget
 
         def wheel(event):
             if isinstance(event.widget, (tk.Text, tk.Listbox, ttk.Spinbox)):
@@ -463,8 +546,14 @@ class DefenseApp:
     def _create_service(self):
         if self._service_factory is None:
             from .service import AgentService
-            return AgentService(state_dir=self.state_dir)
-        return self._service_factory(state_dir=self.state_dir)
+            service = AgentService(state_dir=self.state_dir)
+        else:
+            service = self._service_factory(state_dir=self.state_dir)
+        # Closing may begin before Tk consumes the initialization result. Retain
+        # the service here so shutdown can close it after this worker completes.
+        with self._workers_lock:
+            self._created_service = service
+        return service
 
     def _initialized(self, service: Any) -> None:
         self.service = service
@@ -488,8 +577,20 @@ class DefenseApp:
                 # Keep exceptions concise; service/Cloud layer is responsible for
                 # redaction. The actual secret entry is removed as an extra guard.
                 self._results.put((key, success, None, str(error), show_error))
+            finally:
+                with self._workers_lock:
+                    self._workers.discard(threading.current_thread())
 
-        threading.Thread(target=work, name=f"sawm-ui-{key}", daemon=True).start()
+        worker = threading.Thread(target=work, name=f"sawm-ui-{key}", daemon=True)
+        with self._workers_lock:
+            self._workers.add(worker)
+        try:
+            worker.start()
+        except RuntimeError:
+            with self._workers_lock:
+                self._workers.discard(worker)
+            self._inflight.pop(key, None)
+            raise
         return True
 
     def _drain(self) -> None:
@@ -547,7 +648,7 @@ class DefenseApp:
         external = bool(status.get("external_monitor"))
         self.header_state.configure(text="SERVICE DE SURVEILLANCE ACTIF" if external else "SURVEILLANCE ACTIVE" if running else "SURVEILLANCE EN PAUSE")
         self.monitor_button.configure(text="Géré par le service utilisateur" if external else "Mettre en pause" if running else "Démarrer la surveillance", state="disabled" if external else "normal")
-        npaths = len(settings.get("monitor_paths") or [])
+        npaths = len((status.get("downloads") or {}).get("effective_paths") or settings.get("monitor_paths") or [])
         self.cards["monitor"][0].configure(text="Active" if running else "En pause")
         self.cards["monitor"][1].configure(text=f"{npaths} dossier(s) · intervalle {settings.get('poll_seconds', 5)} s")
         cloud = status.get("cloud") or {}
@@ -558,7 +659,7 @@ class DefenseApp:
         available = bool(av.get("available", av.get("status") == "available"))
         engine = av.get("engine") or av.get("name") or "Moteur local"
         self.cards["av"][0].configure(text=str(engine)[:18] if available else "Absent")
-        self.cards["av"][1].configure(text="Analyse à la demande disponible" if available else "Installez ClamAV ou activez Defender")
+        self.cards["av"][1].configure(text="Signatures + inspection structurelle" if available else "Inspection structurelle · sans signatures antivirus")
         nactions = len(settings.get("automatic_actions") or [])
         self.cards["actions"][0].configure(text=f"{nactions} permission(s)")
         self.cards["actions"][1].configure(text="Sous contrôle des preuves locales" if nactions else "Observer & signaler uniquement")
@@ -575,17 +676,25 @@ class DefenseApp:
             if isinstance(item, dict):
                 marker = "●" if item.get("available") else "○"
                 notes.append(f"{marker}  {item.get('name', 'Capteur')}\n   {item.get('reason', 'Disponible' if item.get('available') else 'Indisponible')}")
+        security = status.get("security_capabilities")
+        if security:
+            notes.append("CAPTEURS DE SÉCURITÉ\n" + _display(security, 3500))
         coverage = snapshot.get("coverage") or {}
         if coverage:
             notes.append("PÉRIMÈTRE DE CET ÉCHANTILLON\n" + _display(coverage, 2500))
         if not available:
-            notes.append("○  Aucun moteur antivirus disponible\n   La surveillance des changements ne certifie pas l’absence de malware.")
+            notes.append("○  Aucun moteur antivirus à signatures disponible\n   L’inspection structurelle continue. Aucun indicateur reconnu ne certifie pas un fichier sain.")
         self._set_text(self.coverage_text, "\n\n".join(notes) or "Démarrez la surveillance pour mesurer la couverture effective.")
         events = status.get("events") or []
         self._set_text(self.recent_text, "\n\n".join(f"{_clock(e.get('timestamp'))}  /  {e.get('severity', 'info')}\n{e.get('summary', e.get('kind', 'Observation'))}" for e in events[:7]) or "Aucune observation enregistrée. Ajoutez un dossier et démarrez la surveillance.")
         self._render_events()
         self._render_system(snapshot)
         self._render_journal(status)
+        self._render_autonomy(status)
+        if not self._launch_checked:
+            self._launch_checked = True
+            if settings.get("monitor_on_launch", False) and not running and not external and self.service is not None:
+                self._submit("monitor", "Démarrage de la veille locale", self.service.start, lambda result: self._request_status())
         key = status.get("key") or {}
         self.key_note.configure(text=(f"Clé disponible · {key.get('backend', 'stockage sécurisé ou session')} · laissez vide pour la conserver." if key.get("available") else "Aucune clé enregistrée. Stockage dans le trousseau système ou uniquement pour cette session."))
 
@@ -597,7 +706,7 @@ class DefenseApp:
         for path in settings.get("monitor_paths") or []:
             self.monitor_paths.insert("end", path)
         for key, var in self.auto_vars.items():
-            var.set(key == "quarantine" and key in (settings.get("automatic_actions") or []))
+            var.set(key in (settings.get("automatic_actions") or []))
         for key, widget in self.scope_texts.items():
             self._set_text(widget, "\n".join(settings.get(key) or []))
 
@@ -612,7 +721,7 @@ class DefenseApp:
                 continue
             if choice == "Fichiers" and not any(word in kind for word in ("file", "scan", "antivirus", "quarantine")):
                 continue
-            if choice == "Réseau" and not any(word in kind for word in ("network", "connection", "ip", "cloud")):
+            if choice == "Réseau" and not any(word in kind for word in ("network", "connection", "ip", "cloud", "auth", "intrusion")):
                 continue
             if choice == "Ressources" and not any(word in kind for word in ("cpu", "memory", "resource", "process")):
                 continue
@@ -667,6 +776,71 @@ class DefenseApp:
             rows.append((key, (_clock(call.get("timestamp")), call.get("operation", call.get("name", call.get("endpoint", "API"))), callstatus, _number(call.get("latency_ms", call.get("duration_ms"))), tokens, call.get("detail", call.get("error_code", call.get("error", ""))))))
         self._replace_tree(self.call_tree, rows)
         self.call_note.configure(text=f"{len(calls)} appel(s) affiché(s) · {errors} erreur(s) · « n.d. » : mesure non fournie par l’API")
+
+    def _render_autonomy(self, status: dict) -> None:
+        settings = status.get("settings") or {}
+        running = bool(status.get("running") or status.get("external_monitor"))
+        enabled = settings.get("autonomous_analysis_enabled", False)
+        cloud = status.get("cloud") or {}
+        analysis = "activée, selon budget" if enabled and cloud.get("enabled") and cloud.get("configured") else "en attente du Cloud" if enabled else "désactivée"
+        self.autonomy_note.configure(text=f"Veille locale : {'active' if running else 'en pause'} · Analyse SAWM : {analysis} · Notifications système : {'autorisées' if settings.get('notifications_enabled', False) else 'désactivées'}")
+        self._notification_rows = {str(row.get("id", i)): row for i, row in enumerate(status.get("notifications") or [])}
+        unread = sum(not row.get("acknowledged") for row in self._notification_rows.values())
+        self.notification_note.configure(text=f"Alertes · {unread} non lue(s)")
+        deliveries = {"submitted": "Soumise à l’OS", "disabled": "Désactivée", "unavailable": "Indisponible", "error": "Échec", "suppressed": "Regroupée", "recorded": "Enregistrée"}
+        self._replace_tree(self.notification_tree, [(key, (_clock(row.get("timestamp")), row.get("severity", "info"), "Lue" if row.get("acknowledged") else "Non lue", deliveries.get(row.get("delivery"), row.get("delivery", "n.d.")), row.get("summary", ""))) for key, row in self._notification_rows.items()])
+        self._order_rows = {str(row.get("id", i)): row for i, row in enumerate(status.get("orders") or [])}
+        labels = {"pending": "En attente", "running": "En cours", "completed": "Terminée", "failed": "Échec", "needs_review": "À examiner", "expired": "Expirée", "cancelled": "Annulée"}
+        rows = []
+        for key, row in self._order_rows.items():
+            actor = row.get("actor") or {}
+            actor_name = actor.get("username", "Session locale") if isinstance(actor, dict) else str(actor)
+            payload = row.get("payload") or {}
+            detail = row.get("error") or payload.get("path") or payload.get("event_id") or "Ouvrir pour les détails"
+            rows.append((key, (_clock(row.get("created_at")), row.get("kind", ""), labels.get(row.get("status"), row.get("status", "n.d.")), actor_name, detail)))
+        self._replace_tree(self.order_tree, rows)
+
+    def _show_notification(self, _event=None) -> None:
+        selected = self.notification_tree.selection()
+        if selected and selected[0] in self._notification_rows:
+            self._result_window("Notification et livraison au système", self._notification_rows[selected[0]])
+
+    def _acknowledge_notification(self) -> None:
+        selected = self.notification_tree.selection()
+        if self.service is not None and selected:
+            notification_id = selected[0]
+            self._submit("notification_ack", "Accusé de lecture", lambda: self.service.acknowledge_notification(notification_id))
+
+    def _show_order(self, _event=None) -> None:
+        selected = self.order_tree.selection()
+        if selected and selected[0] in self._order_rows:
+            self._result_window("Mission et résultat vérifié", self._order_rows[selected[0]])
+
+    def _submit_mission(self) -> None:
+        if self.service is None:
+            return
+        choice = self.mission_kind.get()
+        kind, payload = "inventory", {}
+        if choice == "Analyser un fichier":
+            path = filedialog.askopenfilename(title="Choisir un fichier du périmètre surveillé", parent=self.root)
+            if not path:
+                return
+            kind, payload = "scan", {"path": path}
+        elif choice == "Analyser une observation":
+            event = self._selected_event()
+            if not event:
+                messagebox.showinfo("Mission", "Sélectionnez une observation dans l’onglet Observations, puis revenez confier la mission.", parent=self.root)
+                return
+            kind, payload = "analyze", {"event_id": event["id"]}
+        elif choice == "Produire un rapport":
+            path = filedialog.asksaveasfilename(title="Destination du rapport de mission", parent=self.root, initialfile=f"SAWM-Defense-{datetime.now().strftime('%Y-%m-%d')}.html", defaultextension=".html", filetypes=[("Rapport HTML", "*.html"), ("Données JSON", "*.json")])
+            if not path:
+                return
+            kind, payload = "report", {"path": path}
+        def submitted(result):
+            state = result.get("status", "enregistrée") if isinstance(result, dict) else "enregistrée"
+            self.status_text.configure(text=f"Mission : {state}. Son résultat apparaîtra dans cette liste.")
+        self._submit("mission", "Enregistrement de la mission", lambda: self.service.submit_order(kind, payload, approved=False), submitted)
 
     def _draw_chart(self) -> None:
         if not hasattr(self, "chart"):
@@ -727,7 +901,7 @@ class DefenseApp:
             return
         try:
             patch = {key: var.get() for key, var in self._vars.items() if key not in {"api_key", "persist_key"}}
-            for key in ("poll_seconds", "cloud_per_hour", "max_file_mb", "retention_days"):
+            for key in ("poll_seconds", "cloud_per_hour", "max_file_mb", "retention_days", "auth_failure_threshold", "auth_window_seconds", "auto_block_seconds", "download_scan_settle_seconds"):
                 patch[key] = int(patch[key])
             patch["monitor_paths"] = list(self.monitor_paths.get(0, "end"))
             patch["automatic_actions"] = [key for key, var in self.auto_vars.items() if var.get()]
@@ -737,7 +911,10 @@ class DefenseApp:
             return
         original = set((self._status.get("settings") or {}).get("automatic_actions") or [])
         expanded = set(patch["automatic_actions"]) - original
-        if expanded and not messagebox.askokcancel("Autoriser des interventions automatiques", "Vous autorisez : " + ", ".join(sorted(expanded)) + ".\n\nCes interventions restent soumises aux preuves locales vérifiées et aux périmètres ci-dessous. Relisez les chemins et adresses autorisés avant de confirmer.", parent=self.root):
+        old_settings = self._status.get("settings") or {}
+        if patch.get("autoblock_auth_ips") and not old_settings.get("autoblock_auth_ips"):
+            expanded.add("blocage temporaire des sources SSH attribuées")
+        if expanded and not messagebox.askokcancel("Autoriser des interventions automatiques", "Vous autorisez : " + ", ".join(sorted(expanded)) + ".\n\nCes interventions restent soumises aux preuves locales et aux périmètres. Un arrêt de processus peut perdre son travail ; un blocage IP peut couper un accès. Le blocage des sources SSH utilise un journal système fiable et les IP protégées sont exclues. Vérifiez ces réglages avant de confirmer.", parent=self.root):
             return
         key = self._vars["api_key"].get().strip() or None
         persist = bool(self._vars["persist_key"].get())
@@ -764,7 +941,7 @@ class DefenseApp:
             return
         path = filedialog.askopenfilename(title="Analyser un fichier d’un dossier surveillé", parent=self.root)
         if path:
-            self._submit("scan", "Analyse antivirus locale", lambda: self.service.scan(path), lambda result: self._result_window("Résultat de l’analyse locale", result))
+            self._submit("scan", "Inspection locale du fichier", lambda: self.service.scan(path), lambda result: self._result_window("Résultat de l’analyse locale", result))
 
     def _inventory(self) -> None:
         if self.service is not None:
@@ -892,8 +1069,20 @@ class DefenseApp:
 
         def finish():
             try:
-                if self.service is not None:
-                    self.service.close()
+                # No new UI job can start after _closing. Manual scan/chat work
+                # must finish before AgentService closes its stores. Waiting is
+                # done here, never on Tk's thread and never with a forced timer.
+                while True:
+                    with self._workers_lock:
+                        workers = tuple(self._workers)
+                    if not workers:
+                        break
+                    for worker in workers:
+                        worker.join()
+                with self._workers_lock:
+                    service = self.service or self._created_service
+                if service is not None:
+                    service.close()
             finally:
                 done.set()
 
@@ -903,9 +1092,11 @@ class DefenseApp:
         def destroy_when_closed():
             nonlocal checks
             checks += 1
-            if done.is_set() or checks >= 30:
+            if done.is_set():
                 self.root.destroy()
             else:
+                if checks == 30:
+                    self.status_text.configure(text="Finalisation des opérations en cours et du journal local…")
                 self.root.after(100, destroy_when_closed)
 
         self.root.after(100, destroy_when_closed)

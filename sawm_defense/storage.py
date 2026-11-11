@@ -72,6 +72,11 @@ class Store:
             );
             CREATE TABLE IF NOT EXISTS budget (reserved REAL NOT NULL);
             CREATE INDEX IF NOT EXISTS budget_time ON budget(reserved);
+            CREATE TABLE IF NOT EXISTS local_work (
+                kind TEXT NOT NULL, identifier TEXT NOT NULL, payload TEXT NOT NULL,
+                enqueued REAL NOT NULL, PRIMARY KEY(kind,identifier)
+            );
+            CREATE TABLE IF NOT EXISTS effect_claims (identifier TEXT PRIMARY KEY, claimed REAL NOT NULL);
         """)
         self._db.commit()
 
@@ -223,6 +228,29 @@ class Store:
                 self._db.rollback()
                 raise
 
+    def enqueue_work(self, kind, event):
+        if kind not in {"notify", "respond", "review"}:
+            raise ValueError("File locale inconnue")
+        with self._lock, self._db:
+            self._db.execute("INSERT OR IGNORE INTO local_work VALUES (?,?,?,?)",
+                             (kind, event["id"], _json(event), time.time()))
+
+    def pending_work(self, kind, limit=20):
+        with self._lock:
+            rows = self._db.execute("SELECT payload FROM local_work WHERE kind=? ORDER BY enqueued,identifier LIMIT ?",
+                                    (kind, self._limit(limit))).fetchall()
+        return [json.loads(row[0]) for row in rows]
+
+    def ack_work(self, kind, identifier):
+        with self._lock, self._db:
+            self._db.execute("DELETE FROM local_work WHERE kind=? AND identifier=?", (kind, identifier))
+
+    def claim_effect(self, identifier):
+        """Persist before an automatic mutation. Uncertain effects are never replayed blindly."""
+        with self._lock, self._db:
+            row = self._db.execute("INSERT OR IGNORE INTO effect_claims VALUES (?,?)", (identifier, time.time()))
+            return row.rowcount == 1
+
     def verify_chain(self):
         with self._lock:
             previous = self._db.execute("SELECT value FROM metadata WHERE key='anchor_hash'").fetchone()[0]
@@ -252,7 +280,7 @@ class Store:
                 if not self.verify_chain()["ok"]:
                     raise ValueError("Journal altéré : nettoyage refusé.")
                 rows = self._db.execute("SELECT seq,created,identifier,entry_hash FROM ledger ORDER BY seq").fetchall()
-                pending = {row[0] for row in self._db.execute("SELECT identifier FROM queue UNION SELECT identifier FROM scan_queue")}
+                pending = {row[0] for row in self._db.execute("SELECT identifier FROM queue UNION SELECT identifier FROM scan_queue UNION SELECT identifier FROM local_work")}
                 last = None
                 removed = 0
                 for row in rows:

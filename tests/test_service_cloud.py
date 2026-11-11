@@ -140,28 +140,29 @@ def test_destination_change_denied_while_cloud_operation_in_flight(agent):
 def test_offline_mode_still_prunes_journal(agent,monkeypatch):
     calls=[]
     monkeypatch.setattr(agent.store,"prune",lambda days:calls.append(days) or {"removed":0})
-    one_background_cycle(agent)
+    # Maintenance moved to the independent local response worker.
+    stop = agent._stop
+    class SingleCycle:
+        stopped = False
+        def is_set(self): return self.stopped
+        def wait(self, *_): self.stopped = True
+    agent._stop = SingleCycle()
+    try: agent._responses()
+    finally: agent._stop = stop
     assert calls==[agent.settings()["retention_days"]]
 
 
 def test_more_than_two_files_are_not_permanently_skipped(agent,monkeypatch,tmp_path):
-    agent.save_settings({"automatic_actions":["quarantine"]})
+    agent.save_settings({"automatic_actions":[], "automatic_scan_enabled":True, "monitor_paths":[str(tmp_path)], "protect_downloads":False})
     paths=[]
     for i in range(3):
         path=tmp_path/f"file-{i}.txt";path.write_text("safe");paths.append(str(path))
         agent._event("file_created","info","Nouveau fichier",{"path":str(path)})
     scanned=[]
-    monkeypatch.setattr(agent,"scan",lambda path:scanned.append(path) or {"status":"clean"})
-    class Wake:
-        count=0
-        def wait(self,timeout=None):
-            self.count+=1
-            if self.count>2: agent._stop.set()
-        def clear(self): pass
-        def set(self): pass
-    old=agent._wake;agent._wake=Wake();agent._stop.clear()
-    try: agent._background()
-    finally: agent._wake=old;agent._stop.clear()
+    monkeypatch.setattr(agent,"scan",lambda path:scanned.append(str(path)) or {"status":"no_indicator"})
+    monkeypatch.setattr(agent._stable_files,"ready",lambda *a:True)
+    agent._scan_pending()
+    agent._scan_pending()
     assert sorted(scanned)==sorted(paths)
 
 
@@ -211,3 +212,38 @@ def test_chat_cannot_attach_stale_context_after_consent_revocation(agent,monkeyp
     try: agent.chat("Bonjour")
     except ValueError: pass  # Refuse or strip context; either respects revocation.
     assert attached==[]
+
+
+def test_failed_judge_does_not_starve_evidence_upload(agent,monkeypatch):
+    configure(agent)
+    proof=agent._event("file_suspicious","warning","Local metadata indicator",{"path":"/tmp/fixture"})
+    delivered=[]
+    class Cloud:
+        def __init__(self,*a,**kw): pass
+        def upload(self,events):
+            delivered.extend(e["id"] for e in events)
+            return {"event_ids":[e["id"] for e in events],"status":"completed"}
+        def analyze(self,*a): raise RuntimeError("Judge unavailable")
+        def close(self): pass
+    monkeypatch.setattr(service,"CloudBridge",Cloud)
+    agent._review_first=True
+    one_background_cycle(agent)
+    assert proof["id"] in delivered
+    assert agent.store.pending_work("review")[0]["id"]==proof["id"]
+
+
+def test_daemon_discovers_first_key_added_after_start(agent,monkeypatch):
+    agent.save_settings({"space_id":"app-demo","entity_id":"ent_"+"a"*32,
+                         "cloud_enabled":True,"cloud_upload_enabled":True,"cloud_per_hour":10})
+    assert agent._key is None
+    ui=service.AgentService(agent.state_dir)
+    try: ui.save_settings({},api_key="first-test-key")
+    finally: ui.close()
+    calls=[]
+    class Cloud:
+        def __init__(self,settings,key,*args,**kwargs): calls.append(key)
+        def upload(self,events): return {"status":"completed","event_ids":[e["id"] for e in events]}
+        def close(self): pass
+    monkeypatch.setattr(service,"CloudBridge",Cloud)
+    one_background_cycle(agent)
+    assert calls==["first-test-key"]

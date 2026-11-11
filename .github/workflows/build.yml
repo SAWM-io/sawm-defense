@@ -11,19 +11,42 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, windows-latest, macos-14]
+        include:
+          - os: ubuntu-24.04
+            binary: dist/sawm-defense/sawm-defense
+          - os: windows-latest
+            binary: dist/sawm-defense/sawm-defense.exe
+          - os: macos-14
+            binary: dist/SAWM Defense.app/Contents/MacOS/SAWM Defense
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: python -m pip install .[dev]
-      - run: python -m pytest -q
-      - run: python packaging/build.py
+      - name: Install Linux native UI test prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb xauth python3-tk
+      - name: Install build and test dependencies
+        run: python -m pip install ".[dev]"
+      - name: Test with a real virtual display on Linux
+        if: runner.os == 'Linux'
+        run: xvfb-run --auto-servernum python -m pytest -q
+      - name: Test native desktop clients
+        if: runner.os != 'Linux'
+        run: python -m pytest -q
+      - name: Build native executable
+        run: python packaging/build.py
+      - name: Verify the packaged executable on harmless local fixtures
+        run: python packaging/verify_bundle.py "${{ matrix.binary }}" --output "docs/packaged-validation-${{ runner.os }}.json"
+      - name: Create portable release archive and checksums
+        run: python packaging/release_bundle.py --proof "docs/packaged-validation-${{ runner.os }}.json"
       - uses: actions/upload-artifact@v4
         with:
           name: sawm-defense-${{ matrix.os }}
-          path: dist/
+          path: release/
+          if-no-files-found: error
           retention-days: 14

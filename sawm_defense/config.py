@@ -19,6 +19,13 @@ DEFAULTS = {
     "poll_seconds": 5, "cloud_per_hour": 4, "automatic_actions": [],
     "allowed_process_paths": [], "allowed_remote_ips": [], "protected_paths": [],
     "max_file_mb": 100, "retention_days": 30,
+    "monitor_on_launch": True, "notifications_enabled": True,
+    "protect_downloads": True, "automatic_scan_enabled": True,
+    "download_scan_settle_seconds": 3, "autonomous_analysis_enabled": True,
+    "auth_log_paths": [], "auth_journal_enabled": False,
+    "auth_failure_threshold": 5, "auth_window_seconds": 300,
+    "autoblock_auth_ips": False, "protected_remote_ips": [], "auto_block_seconds": 600,
+    "kernel_audit_paths": [],
 }
 
 
@@ -45,11 +52,15 @@ def validate_config(config: dict) -> dict:
         raise ValueError("Champ de configuration inconnu ; aucune clé API n'est acceptée ici.")
     out = copy.deepcopy(DEFAULTS)
     out.update(copy.deepcopy(config))
-    for key in ("cloud_enabled", "cloud_upload_enabled"):
+    for key in ("cloud_enabled", "cloud_upload_enabled", "monitor_on_launch", "notifications_enabled",
+                "protect_downloads", "automatic_scan_enabled", "autonomous_analysis_enabled",
+                "auth_journal_enabled", "autoblock_auth_ips"):
         if type(out[key]) is not bool:
             raise ValueError(f"{key} doit être un booléen.")
     for key, low, high in (("poll_seconds", 1, 3600), ("cloud_per_hour", 0, 120),
-                           ("max_file_mb", 1, 2048), ("retention_days", 1, 3650)):
+                           ("max_file_mb", 1, 2048), ("retention_days", 1, 3650),
+                           ("download_scan_settle_seconds", 1, 120), ("auth_failure_threshold", 3, 100),
+                           ("auth_window_seconds", 30, 3600), ("auto_block_seconds", 60, 3600)):
         if type(out[key]) is not int or not low <= out[key] <= high:
             raise ValueError(f"{key} doit être un entier entre {low} et {high}.")
     base = out["cloud_base_url"]
@@ -63,7 +74,7 @@ def validate_config(config: dict) -> dict:
         value = out[key]
         if not isinstance(value, str) or (value and not re.fullmatch(pattern, value)):
             raise ValueError(f"{key} invalide.")
-    for key in ("monitor_paths", "protected_paths", "allowed_process_paths"):
+    for key in ("monitor_paths", "protected_paths", "allowed_process_paths", "auth_log_paths", "kernel_audit_paths"):
         values = out[key]
         if not isinstance(values, list) or len(values) > 100:
             raise ValueError(f"{key} exige une liste de 100 chemins au maximum.")
@@ -93,6 +104,13 @@ def validate_config(config: dict) -> dict:
             raise ValueError("Seules des adresses IP publiques individuelles sont autorisées.")
         normalized_ips.append(str(address))
     out["allowed_remote_ips"] = list(dict.fromkeys(normalized_ips))
+    protected = out["protected_remote_ips"]
+    if not isinstance(protected, list) or len(protected) > 100 or any(not isinstance(v, str) for v in protected):
+        raise ValueError("Liste d'adresses protégées invalide.")
+    try:
+        out["protected_remote_ips"] = list(dict.fromkeys(str(ipaddress.ip_address(v)) for v in protected if isinstance(v, str)))
+    except ValueError:
+        raise ValueError("Adresses protégées : IP individuelles requises.") from None
     return out
 
 

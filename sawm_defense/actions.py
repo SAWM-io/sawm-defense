@@ -13,15 +13,64 @@ import shutil
 import socket
 import stat
 import subprocess
+import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 import uuid
 from urllib.parse import urlparse
 
 from .platforms import file_digest, no_symlink, psutil, utc_now
+from .policy import trusted_auth_event
 
 
 def _inside(path, roots):
     return any(path.is_relative_to(Path(os.path.abspath(os.path.expanduser(root)))) for root in roots)
+
+
+def _address_equal(value, expected):
+    try:
+        # Windows lists a host RemoteIP as /32 or /128 on some versions.
+        network = ipaddress.ip_network(value.strip(), strict=False)
+        return network.prefixlen == network.max_prefixlen and str(network.network_address) == expected
+    except ValueError:
+        return False
+
+
+def _ufw_present(output, name, ip):
+    found = set()
+    for line in output.splitlines():
+        body, marker, comment = line.partition("#")
+        if not marker or comment.strip() != name:
+            continue
+        body = body.replace("(v6)", "").strip()
+        match = re.fullmatch(r"(\S+)\s+DENY(?:\s+(IN|OUT))?\s+(\S+)", body)
+        if not match:
+            continue
+        destination, direction, source = match.groups()
+        if direction in {None, "IN"} and destination == "Anywhere" and _address_equal(source, ip):
+            found.add("in")
+        if direction == "OUT" and source == "Anywhere" and _address_equal(destination, ip):
+            found.add("out")
+    return found
+
+
+def _netsh_present(output, name, ip, direction):
+    # Fail closed on unsupported/localized output instead of treating exit 0
+    # as proof that the exact requested firewall rule exists.
+    fields = {}
+    for line in output.splitlines():
+        key, separator, value = line.partition(":")
+        if separator:
+            key = key.strip().lower().replace(" ", "")
+            if key in fields:
+                return False
+            fields[key] = value.strip()
+    return (fields.get("rulename") == name + "-" + direction
+            and fields.get("enabled", "").lower() == "yes"
+            and fields.get("direction", "").lower() == direction
+            and fields.get("action", "").lower() == "block"
+            and fields.get("localip", "").lower() == "any"
+            and fields.get("protocol", "").lower() == "any"
+            and _address_equal(fields.get("remoteip", ""), ip))
 
 
 class ActionExecutor:
@@ -208,8 +257,15 @@ class ActionExecutor:
 
     def _block_ip(self, event, config):
         ip = str(ipaddress.ip_address(event.get("details", {})["remote_ip"]))
-        if not ipaddress.ip_address(ip).is_global or ip not in config.get("allowed_remote_ips", []):
-            raise ValueError("Seule une IP publique explicitement autorisée peut être bloquée")
+        automatic = config.get("_automatic_response") is True
+        auth_autoscope = (automatic and config.get("autoblock_auth_ips") is True
+                          and trusted_auth_event(event, config))
+        if automatic and not trusted_auth_event(event, config):
+            raise ValueError("Le blocage automatique exige des échecs SSH système vérifiés et récents")
+        if not ipaddress.ip_address(ip).is_global or (ip not in config.get("allowed_remote_ips", []) and not auth_autoscope):
+            raise ValueError("L'IP publique doit être autorisée explicitement ou par la politique SSH vérifiée")
+        if ip in config.get("protected_remote_ips", []):
+            raise ValueError("Adresse distante protégée")
         if ip in {"1.1.1.1", "1.0.0.1", "8.8.8.8", "8.8.4.4", "9.9.9.9", "149.112.112.112"}:
             raise ValueError("Résolveur DNS protégé")
         hostname = urlparse(config.get("cloud_base_url", "https://basira-api.sawm.io")).hostname
@@ -257,20 +313,74 @@ class ActionExecutor:
             commands = [[ufw, "deny", "in", "from", ip, "comment", name], [ufw, "deny", "out", "to", ip, "comment", name]]
             rollback = [[ufw, "--force", "delete", "deny", "in", "from", ip, "comment", name], [ufw, "--force", "delete", "deny", "out", "to", ip, "comment", name]]
         else:
+            profiles = subprocess.run(["netsh", "advfirewall", "show", "allprofiles", "state"], capture_output=True, text=True, timeout=10)
+            states = re.findall(r"^State\s+(ON|OFF)\s*$", profiles.stdout, re.M)
+            if profiles.returncode or len(states) != 3 or any(value != "ON" for value in states):
+                return self._result("block_ip", "denied", "Profils pare-feu actifs non vérifiables ; aucune activation globale")
             commands = [["netsh", "advfirewall", "firewall", "add", "rule", f"name={name}-{d}", f"dir={d}", "action=block", f"remoteip={ip}", "enable=yes"] for d in ("in", "out")]
             rollback = [["netsh", "advfirewall", "firewall", "delete", "rule", f"name={name}-{d}"] for d in ("in", "out")]
         receipt = {"receipt_id": receipt_id, "action": "block_ip", "remote_ip": ip, "rule_name": name,
-                   "platform": system, "timestamp": utc_now(), "event_id": event.get("id")}
+                   "platform": system, "timestamp": utc_now(), "event_id": event.get("id"), "automatic": automatic}
+        if automatic:
+            receipt["expires_at"] = time.time() + min(3600, max(60, int(config.get("auto_block_seconds", 600))))
         self._write_receipt(receipt)
-        successful = []
-        for i, cmd in enumerate(commands):
-            response = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-            if response.returncode:
-                for previous in successful:
-                    subprocess.run(rollback[previous], capture_output=True, timeout=10)
-                return self._result("block_ip", "error", "Échec de règle pare-feu ; retour arrière tenté", **receipt)
-            successful.append(i)
-        return self._result("block_ip", "completed", "Règles ciblées installées ; vérifier séparément leur effet réseau", **receipt)
+        try:
+            for cmd in commands:
+                response = subprocess.run(cmd, capture_output=True, text=True, timeout=10, env={**os.environ, "LC_ALL": "C"})
+                if response.returncode:
+                    raise RuntimeError("Firewall declined rule")
+            checked = self._inspect_firewall(receipt)
+            if not checked["ok"] or checked["present"] != {"in", "out"} or len(checked["named"]) != 2:
+                raise RuntimeError("Exact firewall rules not verified")
+            return self._result("block_ip", "completed", "Deux règles ciblées présentes et vérifiées ; effet sur le trafic à contrôler séparément", verified=True, **receipt)
+        except (OSError, RuntimeError, subprocess.TimeoutExpired):
+            # The timed-out command may have succeeded. Keep the prepared
+            # receipt and inspect/remove both exact possible rules.
+            recovered = self._remove_firewall(receipt, rollback)
+            return self._result("block_ip", "error", "Installation non vérifiée ; retrait ciblé " + ("vérifié" if recovered else "à contrôler"),
+                                verified=False, rollback_verified=recovered, **receipt)
+
+    @staticmethod
+    def _inspect_firewall(receipt):
+        name, ip = receipt["rule_name"], receipt["remote_ip"]
+        if receipt["platform"] == "Linux":
+            executable = shutil.which("ufw")
+            if not executable:
+                return {"ok": False, "present": set(), "named": set()}
+            result = subprocess.run([executable, "status"], capture_output=True, text=True, timeout=10, env={**os.environ, "LC_ALL": "C"})
+            active = result.returncode == 0 and "Status: active" in result.stdout
+            named = {line for line in result.stdout.splitlines() if line.partition("#")[2].strip() == name}
+            return {"ok": active, "present": _ufw_present(result.stdout, name, ip), "named": named}
+        present, named, ok = set(), set(), True
+        for direction in ("in", "out"):
+            result = subprocess.run(["netsh", "advfirewall", "firewall", "show", "rule", f"name={name}-{direction}", "verbose"],
+                                    capture_output=True, text=True, timeout=10)
+            if "No rules match the specified criteria." in result.stdout:
+                continue
+            if result.returncode or not result.stdout.strip():
+                ok = False
+                continue
+            if re.search(r"^Rule Name:\s*" + re.escape(name + "-" + direction) + r"\s*$", result.stdout, re.M):
+                named.add(direction)
+            else:
+                ok = False
+            if _netsh_present(result.stdout, name, ip, direction):
+                present.add(direction)
+        return {"ok": ok, "present": present, "named": named}
+
+    def _remove_firewall(self, receipt, commands):
+        for cmd in commands:
+            try:
+                subprocess.run(cmd, capture_output=True, text=True, timeout=10, env={**os.environ, "LC_ALL": "C"})
+            except (OSError, subprocess.TimeoutExpired):
+                # Still inspect actual state: a timed-out native command may
+                # have completed, and absence is what the receipt must prove.
+                pass
+        try:
+            checked = self._inspect_firewall(receipt)
+            return checked["ok"] and not checked["named"]
+        except (OSError, subprocess.TimeoutExpired):
+            return False
 
     def rollback(self, record, config):
         try:
@@ -281,6 +391,8 @@ class ActionExecutor:
                 raise ValueError("Retour arrière non autorisé")
             ip = str(ipaddress.ip_address(receipt["remote_ip"]))
             name = "SAWM-" + receipt["receipt_id"]
+            if receipt.get("rule_name") != name or not ipaddress.ip_address(ip).is_global:
+                raise ValueError("Identité de règle incohérente")
             if platform.system() == "Windows":
                 commands = [["netsh", "advfirewall", "firewall", "delete", "rule", f"name={name}-{d}"] for d in ("in", "out")]
             else:
@@ -288,7 +400,8 @@ class ActionExecutor:
                 if not ufw:
                     raise ValueError("UFW absent")
                 commands = [[ufw, "--force", "delete", "deny", "in", "from", ip, "comment", name], [ufw, "--force", "delete", "deny", "out", "to", ip, "comment", name]]
-            codes = [subprocess.run(cmd, capture_output=True, timeout=10).returncode for cmd in commands]
-            return self._result("unblock_ip", "completed" if not any(codes) else "error", "Suppression des règles ciblées demandée", receipt_id=receipt["receipt_id"], remote_ip=ip)
-        except (ValueError, OSError, KeyError, subprocess.TimeoutExpired):
+            removed = self._remove_firewall(receipt, commands)
+            return self._result("unblock_ip", "completed" if removed else "error", "Retrait des règles ciblées " + ("vérifié" if removed else "non vérifié"),
+                                verified=bool(removed), receipt_id=receipt["receipt_id"], remote_ip=ip)
+        except (ValueError, OSError, KeyError, TypeError, subprocess.TimeoutExpired):
             return self._result("unblock_ip", "denied", "Reçu, plateforme ou autorisation indisponible")

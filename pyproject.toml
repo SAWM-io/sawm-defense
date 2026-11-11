@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sawm-defense"
-version = "0.1.0"
+version = "0.2.0"
 description = "SAWM and Basira Cloud endpoint defense — desktop and CLI"
 requires-python = ">=3.12"
 dependencies = ["httpx==0.28.1", "psutil==7.0.0", "keyring==25.6.0", "defusedxml==0.7.1"]
