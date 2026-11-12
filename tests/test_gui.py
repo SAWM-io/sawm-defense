@@ -171,11 +171,14 @@ def _native_smoke():
         app.tabs.select(app.pages["overview"])
         root.geometry("1280x870")
         root.deiconify()
-        root.update()
+        spin(root, lambda: app.review_tree.winfo_ismapped() and app.review_tree.winfo_height() > 1)
         app._apply_status(soc)
         root.update_idletasks()
         box = app.review_tree.bbox("event-demo")
-        assert box and box[3] > 0 and box[1] + box[3] <= app.review_tree.winfo_height()
+        assert box and box[3] > 0 and box[1] + box[3] <= app.review_tree.winfo_height(), {
+            "row": box, "table_height": app.review_tree.winfo_height(),
+            "window_size": (root.winfo_width(), root.winfo_height()),
+        }
         assert "Prochaine revue" in app.scheduler_brief.cget("text")
         root.withdraw()
         app.priority_tree.selection_set("event-demo")

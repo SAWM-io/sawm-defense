@@ -273,8 +273,8 @@ class DefenseApp:
         pane.add(left, weight=3)
         pane.add(right, weight=2)
         left.columnconfigure(0, weight=1)
-        left.rowconfigure(1, weight=2)
-        left.rowconfigure(3, weight=3)
+        left.rowconfigure(1, weight=2, minsize=45)
+        left.rowconfigure(3, weight=3, minsize=95)
         ttk.Label(left, text="Activité de la machine", style="Panel.TLabel", font=(self.font, 13, "bold")).grid(row=0, column=0, sticky="w")
         self.chart = tk.Canvas(left, background=PANEL, highlightthickness=0, height=150)
         self.chart.grid(row=1, column=0, sticky="nsew", pady=(4, 10))
@@ -286,7 +286,7 @@ class DefenseApp:
         self.priority_tree.bind("<Double-1>", self._open_priority)
         ttk.Button(left, text="Ouvrir la preuve et les options →", command=self._open_priority).grid(row=4, column=0, sticky="w", pady=(9, 0))
         right.columnconfigure(0, weight=1)
-        right.rowconfigure(4, weight=1)
+        right.rowconfigure(4, weight=1, minsize=95)
         ttk.Button(right, text="Cycle de décision · détails →", command=lambda:
                    self._result_window("Cycle de décision SAWM", self.scheduler_text.get("1.0", "end").strip())
                    ).grid(row=0, column=0, sticky="w")
@@ -295,13 +295,11 @@ class DefenseApp:
         self.scheduler_text = self._text(right, height=4)
         self.scheduler_brief = ttk.Label(right, style="Panel.TLabel", text="En attente du service", font=(self.font, 10))
         self.scheduler_brief.grid(row=1, column=0, sticky="ew", pady=(9, 7))
-        ttk.Button(right, text="Régler la cadence et le budget →", command=lambda: self.tabs.select(self.pages["settings"])).grid(row=2, column=0, sticky="w", pady=(0, 12))
         self.review_note = ttk.Label(right, text="File d’analyse SAWM", style="Panel.TLabel", font=(self.font, 12, "bold"))
         self.review_note.grid(row=3, column=0, sticky="w", pady=(0, 8))
         review, self.review_tree = self._tree(right, [("severity", "Niveau", 75), ("source", "Source", 140), ("summary", "À analyser", 240)], 4)
         review.grid(row=4, column=0, sticky="nsew")
         self.review_tree.bind("<Double-1>", self._show_review)
-        ttk.Button(right, text="Ouvrir le suivi / la preuve →", command=self._show_review).grid(row=5, column=0, sticky="w", pady=(9, 0))
         # Keep the current coverage as selectable text, opened on demand rather
         # than allowing verbose capability messages to push incidents off-screen.
         self.coverage_text = self._text(page, height=10)
