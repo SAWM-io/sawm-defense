@@ -287,17 +287,14 @@ class DefenseApp:
         ttk.Button(left, text="Ouvrir la preuve et les options →", command=self._open_priority).grid(row=4, column=0, sticky="w", pady=(9, 0))
         right.columnconfigure(0, weight=1)
         right.rowconfigure(4, weight=1)
-        ttk.Label(right, text="Cycle de décision", style="Panel.TLabel", font=(self.font, 13, "bold")).grid(row=0, column=0, sticky="w")
-        scheduler_panel = ttk.Frame(right, style="Panel.TFrame")
-        scheduler_panel.columnconfigure(0, weight=1)
-        scheduler_panel.grid(row=1, column=0, sticky="ew", pady=(9, 7))
-        # Keep the queue and its evidence button visible on laptop displays.
-        # Long scheduling receipts remain readable in a separate scroll area.
-        self.scheduler_text = self._text(scheduler_panel, height=4)
-        self.scheduler_text.grid(row=0, column=0, sticky="ew")
-        scheduler_scroll = ttk.Scrollbar(scheduler_panel, orient="vertical", command=self.scheduler_text.yview)
-        scheduler_scroll.grid(row=0, column=1, sticky="ns")
-        self.scheduler_text.configure(yscrollcommand=scheduler_scroll.set)
+        ttk.Button(right, text="Cycle de décision · détails →", command=lambda:
+                   self._result_window("Cycle de décision SAWM", self.scheduler_text.get("1.0", "end").strip())
+                   ).grid(row=0, column=0, sticky="w")
+        # Full receipts stay selectable in a separate window. A compact summary
+        # leaves room for the live queue on laptop displays.
+        self.scheduler_text = self._text(right, height=4)
+        self.scheduler_brief = ttk.Label(right, style="Panel.TLabel", text="En attente du service", font=(self.font, 10))
+        self.scheduler_brief.grid(row=1, column=0, sticky="ew", pady=(9, 7))
         ttk.Button(right, text="Régler la cadence et le budget →", command=lambda: self.tabs.select(self.pages["settings"])).grid(row=2, column=0, sticky="w", pady=(0, 12))
         self.review_note = ttk.Label(right, text="File d’analyse SAWM", style="Panel.TLabel", font=(self.font, 12, "bold"))
         self.review_note.grid(row=3, column=0, sticky="w", pady=(0, 8))
@@ -953,8 +950,13 @@ class DefenseApp:
         reason = scheduler.get("last_reason") or "Aucune justification de revue enregistrée"
         next_review = _remaining(scheduler.get("next_review_in_seconds")) if scheduler.get("next_review_at") else "non planifiée"
         if not scheduler:
+            self.scheduler_brief.configure(text="Ordonnanceur non disponible")
             self._set_text(self.scheduler_text, "Ordonnanceur non disponible.\n\nLes appels et les reçus restent consultables dans le journal. Aucun rythme de décision n’est déduit de l’animation de cette interface.")
         else:
+            self.scheduler_brief.configure(text=
+                f"État : {states.get(state, str(state or 'non fourni'))}\n"
+                f"Prochaine revue : {next_review}\n"
+                f"Dernier retour reçu : {_clock(scheduler.get('last_success_at'))}")
             self._set_text(self.scheduler_text,
                 f"État : {states.get(state, str(state or 'non fourni'))}\n"
                 f"Dernière revue : {_clock(scheduler.get('last_review_at'))}\n"

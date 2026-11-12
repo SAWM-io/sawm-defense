@@ -166,6 +166,18 @@ def _native_smoke():
         assert "30 / 10 s" in app.scheduler_text.get("1.0", "end")
         assert "event-demo" in app.scheduler_text.get("1.0", "end")
         assert app.review_tree.item("event-demo", "values")[1] == "trusted_journal"
+        # The first queued observation must remain visible on a laptop display,
+        # rather than being squeezed below a long scheduling receipt.
+        app.tabs.select(app.pages["overview"])
+        root.geometry("1280x870")
+        root.deiconify()
+        root.update()
+        app._apply_status(soc)
+        root.update_idletasks()
+        box = app.review_tree.bbox("event-demo")
+        assert box and box[3] > 0 and box[1] + box[3] <= app.review_tree.winfo_height()
+        assert "Prochaine revue" in app.scheduler_brief.cget("text")
+        root.withdraw()
         app.priority_tree.selection_set("event-demo")
         app._open_priority()
         assert app.tabs.select() == str(app.pages["events"])
