@@ -34,7 +34,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb xauth python3-tk xdotool x11-utils libxres1
+          sudo apt-get install -y xvfb xauth python3-tk xdotool x11-utils libxres1 ufw iproute2 util-linux
       - name: Install build and test dependencies
         run: python -m pip install ".[dev]"
       - name: Test with a real virtual display on Linux
@@ -43,6 +43,9 @@ jobs:
       - name: Test native desktop clients
         if: runner.os != 'Linux'
         run: python -m pytest -q -ra
+      - name: Verify authorized native firewall response in isolated Linux namespaces
+        if: runner.os == 'Linux'
+        run: sudo env "PATH=$PATH" "LD_LIBRARY_PATH=$LD_LIBRARY_PATH" "$pythonLocation/bin/python" packaging/verify_firewall_lab.py --output docs/native-firewall-Linux.json
       - name: Build native executable
         run: python packaging/build.py
       - name: Verify the packaged executable on harmless local fixtures

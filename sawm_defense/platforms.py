@@ -237,10 +237,22 @@ class Collector:
                 raw = psutil.net_connections(kind="inet")
                 self._denied_network = False
                 current = set()
+                process_by_pid = {p.get("pid"): p for p in processes}
+                coverage["network_source"] = "psutil.net_connections"
                 for conn in raw[:self.MAX_CONNECTIONS]:
                     remote = f"{conn.raddr.ip}:{conn.raddr.port}" if conn.raddr else ""
                     local = f"{conn.laddr.ip}:{conn.laddr.port}" if conn.laddr else ""
-                    row = {"pid": conn.pid, "local": local, "remote": remote, "status": conn.status}
+                    process_info = process_by_pid.get(conn.pid, {})
+                    row = {"pid": conn.pid, "local": local, "remote": remote, "status": conn.status,
+                           "local_ip": conn.laddr.ip if conn.laddr else None,
+                           "local_port": conn.laddr.port if conn.laddr else None,
+                           "remote_ip": conn.raddr.ip if conn.raddr else None,
+                           "remote_port": conn.raddr.port if conn.raddr else None,
+                           "exe": process_info.get("exe"), "username": process_info.get("username"),
+                           "create_time": process_info.get("create_time"),
+                           "protocol": {1: "tcp", 2: "udp"}.get(getattr(conn, "type", None), "unknown"),
+                           "attribution": "OS socket PID; process metadata from same sample",
+                           "direction": "unknown"}
                     connections.append(row)
                     if conn.raddr:
                         key = (conn.pid, conn.raddr.ip, conn.raddr.port)

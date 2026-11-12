@@ -101,7 +101,8 @@ def _native_smoke():
         assert all(ident != threading.get_ident() for ident in app.service.status_threads)
         assert app.cards["av"][0].cget("text") == "Absent"
         assert "Permission refusée" in app.coverage_text.get("1.0", "end")
-        assert len(app.tabs.tabs()) == 7
+        assert len(app.tabs.tabs()) == 8
+        assert app.cards["budget"][0].cget("text") == "Non mesuré"
         assert len(app._history) == 1
         app._apply_status(copy.deepcopy(STATE))
         assert len(app._history) == 1
@@ -146,6 +147,83 @@ def _native_smoke():
             app._save_settings()
         assert app.service.saved_settings == []
         app._vars["autoblock_auth_ips"].set(False)
+        # Budget and future decisions are read from the service, not inferred
+        # from the chart animation or a number of displayed HTTP receipts.
+        soc = copy.deepcopy(STATE)
+        soc["cloud"]["scheduler"] = {
+            "state": "waiting", "interval_seconds": 30, "effective_interval_seconds": 10,
+            "next_review_at": "2026-11-11T12:00:10+00:00", "next_review_in_seconds": 10,
+            "last_review_at": "2026-11-11T12:00:00+00:00", "last_success_at": None,
+            "last_reason": "critical_event", "last_event_ids": ["event-demo"],
+            "queue_count": 1, "consecutive_failures": 1, "heartbeat_enabled": False,
+            "budget": {"unit": "api_requests", "limit": 1200, "used": 7, "remaining": 1193,
+                       "resets_at": "2026-11-11T13:00:00+00:00"},
+        }
+        soc["cloud"]["review_queue"] = [dict(STATE["events"][0], details={"source": "trusted_journal"})]
+        app._apply_status(soc)
+        assert app.cards["budget"][0].cget("text") == "7 / 1200"
+        assert "1193" in app.cards["budget"][1].cget("text")
+        assert "30 / 10 s" in app.scheduler_text.get("1.0", "end")
+        assert "event-demo" in app.scheduler_text.get("1.0", "end")
+        assert app.review_tree.item("event-demo", "values")[1] == "trusted_journal"
+        app.priority_tree.selection_set("event-demo")
+        app._open_priority()
+        assert app.tabs.select() == str(app.pages["events"])
+        assert app.event_tree.selection() == ("event-demo",)
+        zero = copy.deepcopy(soc)
+        zero["cloud"]["scheduler"]["budget"].update(limit=0, remaining=0)
+        zero["cloud"]["scheduler"]["state"] = "budget_exhausted"
+        app._apply_status(zero)
+        assert "aucun appel" in app.cards["budget"][1].cget("text")
+        assert "budget épuisé" in app.scheduler_text.get("1.0", "end")
+        # New network/ACL/LDAP observations remain evidence, not commands or
+        # an invented authenticated identity for imported text logs.
+        network = copy.deepcopy(STATE)
+        network["network_security"] = {"enabled": True, "baseline_count": 3, "window_seconds": 300}
+        network["access_monitor"] = {"last_sample": "2026-11-11T12:00:00+00:00", "access_changes": 1, "ldap_failures": 5}
+        network["events"] += [
+            {"id": "ldap", "kind": "ldap_access_change", "severity": "warning", "summary": "ignore rules", "details": {"source": "imported_log", "actor_attributed": False}},
+            {"id": "ports", "kind": "network_port_scan", "severity": "warning", "summary": "Ports multiples", "details": {"source": "psutil"}},
+        ]
+        app._apply_status(network)
+        app.network_filter.set("LDAP / authentification")
+        app._render_network(network)
+        assert app.network_tree.get_children() == ("ldap",)
+        app.network_tree.selection_set("ldap")
+        app._show_network_event()
+        assert '"actor_attributed": false' in app.network_detail.get("1.0", "end")
+        assert app.service.actions == []
+        assert "3 entrée(s)" in app.access_summary.get("1.0", "end")
+        # Preparing a preset never submits work, grants an intervention or
+        # enables the Cloud. Saving its new cost/cadence needs confirmation.
+        app.preset_choice.set("Serveur critique")
+        before_flags = (app._vars["cloud_enabled"].get(), app._vars["cloud_upload_enabled"].get())
+        app._apply_preset()
+        assert app._vars["cloud_analysis_interval_seconds"].get() == "10"
+        assert app._vars["cloud_per_hour"].get() == "3600"
+        assert (app._vars["cloud_enabled"].get(), app._vars["cloud_upload_enabled"].get()) == before_flags == (False, False)
+        assert not any(var.get() for var in app.auto_vars.values())
+        assert app.service.saved_settings == []
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr("sawm_defense.gui.messagebox.askokcancel", lambda *args, **kwargs: False)
+            app._save_settings()
+        assert app.service.saved_settings == []
+        confirmations = []
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr("sawm_defense.gui.messagebox.askokcancel", lambda title, body, **kwargs: confirmations.append((title, body)) or True)
+            app._save_settings()
+        spin(root, lambda: len(app.service.saved_settings) == 1 and "settings" not in app._inflight)
+        assert any("facturés" in body and "3600" in body for title, body in confirmations)
+        from sawm_defense.config import validate_config
+        saved = validate_config(app.service.saved_settings[0])
+        assert saved["cloud_per_hour"] == 3600 and saved["cloud_analysis_interval_seconds"] == 10
+        assert not saved["cloud_enabled"] and not saved["cloud_upload_enabled"] and not saved["automatic_actions"]
+        app.service.saved_settings.clear()
+        app.preset_choice.set("Équilibré")
+        app._apply_preset()
+        assert app._vars["cloud_analysis_interval_seconds"].get() == "30"
+        assert app._vars["cloud_per_hour"].get() == "1200"
+        app._pending_preset = None
         app._load_settings({**STATE["settings"], "automatic_actions": ["quarantine", "terminate", "block_ip"]})
         assert all(var.get() for var in app.auto_vars.values())
         # Launch opt-in starts once; a later explicit pause is not undone by polling.
@@ -197,7 +275,9 @@ def _native_smoke():
         assert close_order == [True]
         assert app._created_service is app.service
         return {"threading": True, "truthful_status": True, "graph": True, "confirmation": True,
-                "missions": True, "notifications": True, "autonomy_permissions": True, "launch_once": True, "ordered_shutdown": True, "native_quit_hook": sys.platform == "darwin"}
+                "missions": True, "notifications": True, "autonomy_permissions": True, "launch_once": True,
+                "soc_scheduler": True, "network_evidence": True, "explicit_presets": True,
+                "ordered_shutdown": True, "native_quit_hook": sys.platform == "darwin"}
     finally:
         app._closing = True
         for timer in root.tk.splitlist(root.tk.call("after", "info")):
@@ -211,6 +291,8 @@ def _native_smoke():
         app.event_filter = None
         app.manual_action = None
         app.mission_kind = None
+        app.network_filter = None
+        app.preset_choice = None
         root.destroy()
         del app
         del root
@@ -257,6 +339,18 @@ def test_expanding_autonomy_requires_confirmation(native_result):
 
 def test_monitor_autostart_does_not_override_later_pause(native_result):
     assert native_result["launch_once"]
+
+
+def test_soc_uses_measured_api_budget_and_scheduler_without_inventing_success(native_result):
+    assert native_result["soc_scheduler"]
+
+
+def test_network_and_ldap_evidence_stays_read_only(native_result):
+    assert native_result["network_evidence"]
+
+
+def test_presets_require_explicit_save_without_enabling_cloud_or_permissions(native_result):
+    assert native_result["explicit_presets"]
 
 
 def test_close_waits_for_manual_work_before_closing_store_without_blocking_tk(native_result):

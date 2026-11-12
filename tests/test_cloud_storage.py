@@ -23,7 +23,7 @@ def event(identifier="test-event"):
 
 
 @pytest.mark.parametrize("patch",[
-    {"api_key":"secret"},{"poll_seconds":True},{"cloud_per_hour":121},
+    {"api_key":"secret"},{"poll_seconds":True},{"cloud_per_hour":20001},
     {"cloud_base_url":"http://example.com"},{"cloud_base_url":"https://key@example.com"},
     {"cloud_base_url":"https://example.com?secret=a"},{"entity_id":"wrong"},
     {"automatic_actions":["shell"]},{"allowed_remote_ips":["127.0.0.1"]},

@@ -1,4 +1,4 @@
-# SAWM Defense en terminal — version 0.2
+# SAWM Defense en terminal — version 0.3
 
 La CLI et l’application utilisent le même service, les mêmes autorisations et la même base locale. `--state-dir` se place **avant** la commande. Utilisez un chemin privé distinct pour un laboratoire.
 
@@ -28,6 +28,32 @@ sawm-defense watch --seconds 60
 Les options booléennes `--protect-downloads`, `--automatic-scan`, `--notifications`, `--autonomous-analysis`, `--auth-journal`, `--auto-block-auth`, `--auto-quarantine`, `--auto-terminate` et `--auto-block-ip` ont une forme inverse `--no-…`. Les options de connexion existantes `--cloud` et `--upload-events` fonctionnent de la même manière. Une option absente conserve son réglage.
 
 L’inspection locale peut fonctionner sans antivirus. Le résultat de `scan` distingue les contrôles structurels (`static_inspection`) et le moteur antivirus (`antivirus`). `no_indicator` n’est pas une certification du fichier ; `suspicious` et `incomplete` restent à examiner. Le fait d’analyser automatiquement ne donne pas la permission de mettre automatiquement en quarantaine.
+
+## Piloter la cadence et les appels réels
+
+La version 0.3 compte chaque tentative de requête API, y compris les erreurs. Une analyse ou une ingestion peut en utiliser plusieurs. Le plafond par défaut d’un nouveau profil est 1 200 requêtes/h, avec Cloud désactivé. Les plafonds existants ne sont jamais augmentés automatiquement ; un ancien profil partiel conserve 4. Ce plafond n’est pas un montant en euros.
+
+Configurer le rythme sans activer le Cloud ni élargir les permissions :
+
+```bash
+sawm-defense configure --cloud-analysis-interval 30 --cloud-per-hour 1200 --cloud-adaptive --no-cloud-heartbeat
+```
+
+Pour un serveur nécessitant une revue plus fréquente, après accord sur le coût :
+
+```bash
+sawm-defense configure --cloud-analysis-interval 10 --cloud-per-hour 3600 --cloud-adaptive
+```
+
+La collecte locale continue à son propre rythme. L’analyse adaptative peut avancer une revue critique à dix secondes ; elle espace le rythme lorsque la file est vide. `--cloud-heartbeat` autorise explicitement une revue périodique même sans alerte et consomme donc des appels ; `--no-cloud-heartbeat` la désactive. Les délais du fournisseur, le budget et les reprises après panne peuvent retarder la revue.
+
+```bash
+sawm-defense configure --cloud-heartbeat
+sawm-defense status
+sawm-defense configure --cloud-per-hour 0
+```
+
+**0 suspend les requêtes, il ne signifie jamais illimité.** `status` expose `cloud.scheduler` (dernière tentative/réussite, prochaine échéance, motif, file, reprises et budget réel) et `cloud.review_queue` (observations à analyser). Les clés Cloud et le partage restent à activer explicitement ; augmenter la cadence ne les autorise pas à votre place.
 
 ## Examiner immédiatement
 
@@ -106,6 +132,26 @@ sawm-defense configure --auth-log /chemin/autorise/auth.log
 ```
 
 Le seuil et la fenêtre, visibles dans les réglages et les événements, doivent correspondre à la politique du client. Une série d’échecs indique un comportement à traiter, pas l’identité certaine d’un attaquant.
+
+## Réseau et accès en lecture seule
+
+```bash
+sawm-defense configure --network-security
+sawm-defense configure --access-monitor-path /srv/application/config.ini
+sawm-defense configure --ldap-log /var/log/slapd.log
+sawm-defense status
+```
+
+Les sockets échantillonnés alimentent une référence puis des alertes de nouveaux contacts, ports multiples ou destinations multiples. Aucun balayage actif ni inspection du contenu TLS n’est effectué. Les chemins d’accès sont exacts, sans parcours récursif ; leurs métadonnées peuvent changer sans que le capteur sache attribuer l’auteur. Les journaux OpenLDAP `slapd` sont des sources texte non authentifiées : les alertes n’autorisent jamais une modification LDAP automatique. Les seuils et fenêtres se règlent dans l’interface.
+
+Pour appliquer une interdiction réseau explicite, remplacez les valeurs par une IP publique de votre périmètre puis confirmez votre mandat d’exploitation :
+
+```bash
+sawm-defense configure --deny-ip IP_PUBLIQUE_INTERDITE
+sawm-defense configure --auto-block-ip --allow-ip IP_PUBLIQUE_INTERDITE --auto-block-network-policy
+```
+
+**Autoriser le blocage** indique une permission d’action, pas une destination de confiance. **Interdire une IP** définit une règle métier, pas à elle seule une preuve qu’une connexion existe. L’exécution exige une observation récente attribuée, l’exécuteur système et ses droits ; une IP protégée reste exclue. Le blocage peut interrompre un service légitime. Aucun compte, groupe ou droit d’annuaire n’est modifié par ces commandes.
 
 ## Interfaces noyau Linux et démarrage
 

@@ -8,7 +8,7 @@
 
 Une application de défense pour **macOS, Linux et Windows**, le même service en **CLI pour les serveurs**. SAWM Defense relie les observations du poste à **SAWM Cloud**, à la mémoire **Basira**, au rappel **TSST** et au classement **ODVL**. Configurez votre espace et vos autorisations : la veille fonctionne ensuite sans attendre une question dans le chat.
 
-**Version 0.2.1 — pilote logiciel.** Le code de collecte, d’analyse et de contrôle est commun à l’application et à la CLI. Le client utilise les API publiques : les moteurs privés SAWM, Basira, TSST et ODVL ne sont pas distribués. La matrice de couverture ci-dessous distingue les fonctions du client des validations système et Cloud à réaliser dans votre environnement.
+**Console SOC 0.3 — sources en validation.** Les téléchargements ci-dessous correspondent encore à la version publiée 0.2.1 ; les nouvelles fonctions seront intégrées aux prochains paquets après leurs contrôles. Le code de collecte, d’analyse et de contrôle est commun à l’application et à la CLI. Le client utilise les API publiques : les moteurs privés SAWM, Basira, TSST et ODVL ne sont pas distribués. La matrice de couverture ci-dessous distingue les fonctions du client des validations système et Cloud à réaliser dans votre environnement.
 
 ## Ce que l’agent fait pour vous
 
@@ -16,6 +16,8 @@ Une application de défense pour **macOS, Linux et Windows**, le même service e
 - **Examiner les téléchargements** : repérer les fichiers nouveaux ou modifiés, attendre leur stabilité, inspecter leur structure et appeler l’antivirus local lorsqu’il existe.
 - **Inspecter même sans antivirus** : caractéristiques du fichier, en-têtes, type réel, métadonnées, archives et informations de signature disponibles. Un résultat douteux produit une alerte, pas une déclaration infondée de malware.
 - **Relier les signaux** : suivre les événements, retrouver les précédents autorisés avec Basira/TSST, les classer avec ODVL et faire analyser les alertes par SAWM en arrière-plan.
+- **Prioriser la revue** : console SOC avec observations critiques, file d’analyse, source, dernière revue, prochaine échéance et plafond de requêtes API réellement consommées. Une absence de signal ne devient pas une déclaration « tout est sain ».
+- **Observer le réseau et les accès** : changements de référence réseau, séquences de ports ou de destinations, modifications des droits de chemins sélectionnés et journaux OpenLDAP en lecture seule. Les anomalies produisent des alertes ; une politique d’interdiction explicite et les permissions locales restent nécessaires pour agir.
 - **Alerter sans demande préalable** : boîte de notifications persistante et notification native du système. Livraison, échec et accusé de lecture restent distincts.
 - **Intervenir selon votre mandat** : quarantaine, arrêt ciblé et blocage IP, soumis à des preuves locales vérifiées, des cibles attribuées et vos périmètres. Vous choisissez séparément les interventions automatiques.
 - **Repérer les tentatives SSH répétées** : seuil et fenêtre temporelle, provenance du journal, adresses protégées ; blocage temporaire possible à partir d’une source Linux fiable et d’une autorisation explicite.
@@ -182,6 +184,8 @@ Le programme inspecte les fichiers observés sur disque. Il ne garantit pas l’
 | Paquet natif : contrôles CLI et ouverture de fenêtre | Apple Silicon et Intel | Ubuntu 24.04 x86-64 | Windows x86-64 |
 | Fichiers sélectionnés, empreintes, CPU/RAM | Collecte selon périmètre et droits | Collecte selon périmètre et droits | Collecte selon périmètre et droits |
 | Processus et connexions | Selon droits ; certaines mesures réseau peuvent être refusées | Selon droits | Selon droits |
+| Corrélation réseau 0.3 | Sockets visibles, sans capture des paquets | Sockets visibles, sans capture des paquets | Sockets visibles, sans capture des paquets |
+| Droits de fichiers et OpenLDAP 0.3 | Chemins/journaux explicitement configurés, lecture seule | Chemins/journaux explicitement configurés, lecture seule | Bits de fichiers limités ; DACL non décodées ; journaux configurés en lecture seule |
 | Inspection structurelle de fichiers | Contrôles locaux bornés | Contrôles portables | Contrôles portables |
 | Antivirus à signatures | ClamAV s’il est installé | ClamAV s’il est installé | Defender ou ClamAV selon disponibilité |
 | Notifications | Intégration native selon autorisations OS | Service de notifications si disponible ; boîte locale sinon | Intégration native selon environnement ; boîte locale sinon |
@@ -199,9 +203,24 @@ Le dossier [ISO 27001 / CIS](docs/ISO27001-CIS.md) relie les fonctions aux thèm
 
 Les tests automatisés distinguent les opérations locales réellement exécutées, les API simulées, les commandes OS contrôlées sans exécution et les mesures natives restant à faire. Aucun accès Cloud client réel n’a été utilisé dans la campagne locale de cette application. Consultez [les résultats et la méthode](docs/VALIDATION.md) avant une démonstration commerciale.
 
+## Choisir le rythme de la défense
+
+La console propose deux préréglages, préparés à l’écran puis enregistrés avec confirmation :
+
+| Préréglage | Cadence de revue de base | Plafond de requêtes API / heure | Usage |
+| --- | --- | --- | --- |
+| Équilibré | 30 secondes | 1 200 | Observer le poste, analyser les alertes, limiter les appels inutiles |
+| Serveur critique | 10 secondes | 3 600 | Examiner plus fréquemment les signaux d’un périmètre sensible |
+
+Les préréglages **n’activent ni le Cloud, ni le partage, ni les interventions**. Une option distincte permet une revue périodique même sans alerte nouvelle. Le rythme adaptatif peut avancer une revue critique à 10 secondes et ralentir à quatre fois l’intervalle lorsque la file est vide et la revue périodique désactivée. Le délai du fournisseur, une panne ou le plafond peuvent retarder l’analyse : ce rythme n’est pas un engagement de réponse en dix secondes.
+
+Les alertes conservent leurs identifiants et leurs preuves. La console permet de passer d’un signal à son observation, puis aux propositions et reçus du journal. La file d’analyse n’est pas un registre de clôture automatique des incidents.
+
 ## Budget, conservation et exploitation
 
-Le budget par défaut est **4 opérations Cloud par heure**. Une opération peut provoquer plusieurs requêtes HTTP ; le journal montre les appels et les jetons réellement fournis. Un budget ou un crédit insuffisant ne doit pas se transformer en succès simulé.
+La version 0.3 compte des **requêtes API réelles**, y compris les tentatives qui échouent, au lieu de compter une opération globale. Une analyse ou une ingestion peut utiliser plusieurs requêtes. **0 requête/h suspend les appels ; zéro ne signifie jamais illimité.** Le plafond initial d’un nouveau profil est de 1 200 requêtes/h, avec Cloud désactivé. Les plafonds déjà enregistrés sont conservés ; un ancien profil partiel garde la valeur prudente de 4. Aucun crédit supplémentaire n’est acheté automatiquement.
+
+Le journal montre les appels et les jetons fournis par l’API ; le plafond de requêtes ne remplace pas un plafond de dépense en euros. Le montant facturé dépend de l’offre Cloud et des jetons consommés. Le budget restant, son renouvellement et les reprises différées sont visibles dans la console. Un budget ou un crédit insuffisant ne devient pas un succès simulé.
 
 Les observations et tâches en attente sont conservées. Une panne longue ou un flot d’événements peut augmenter le stockage : surveillez l’espace en exploitation. Le journal chaîné détecte des incohérences, mais un journal entièrement local n’est pas inviolable face à l’administrateur de l’hôte. Les quarantaines attendent une décision de restauration ou de traitement.
 

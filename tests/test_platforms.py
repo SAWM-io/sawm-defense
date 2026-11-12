@@ -257,3 +257,20 @@ def test_partial_process_sample_does_not_prune_known_identities(tmp_path, monkey
     assert snapshot["coverage"]["processes_truncated"] is (incomplete_mode == "limit")
     assert snapshot["coverage"]["process_access_denied"] == (1 if incomplete_mode == "protected_item" else 0)
     assert not any(event["kind"] == "process_observed" for event in events)
+
+
+def test_network_snapshot_carries_os_socket_and_bounded_process_join(monkeypatch):
+    import sawm_defense.platforms as module
+    process = SimpleNamespace(info={"pid": 123, "name": "demo", "exe": "/opt/demo", "username": "operator", "create_time": 1000.0})
+    conn = SimpleNamespace(pid=123, laddr=SimpleNamespace(ip="127.0.0.1", port=45001),
+                           raddr=SimpleNamespace(ip="93.184.216.34", port=443), status="ESTABLISHED", type=1)
+    stub = SimpleNamespace(cpu_percent=lambda: 0, virtual_memory=lambda: SimpleNamespace(percent=10),
+                           process_iter=lambda attrs: [process], net_connections=lambda **kwargs: [conn],
+                           AccessDenied=PermissionError, NoSuchProcess=ProcessLookupError)
+    monkeypatch.setattr(module, "psutil", stub)
+    snapshot, _ = module.Collector({}).sample()
+    row = snapshot["connections"][0]
+    assert snapshot["coverage"]["network_source"] == "psutil.net_connections"
+    assert row["remote_ip"] == "93.184.216.34" and row["remote_port"] == 443
+    assert row["exe"] == "/opt/demo" and row["username"] == "operator" and row["create_time"] == 1000.0
+    assert row["protocol"] == "tcp" and row["direction"] == "unknown"

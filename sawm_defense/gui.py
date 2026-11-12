@@ -27,6 +27,31 @@ TEXT = "#f2f2f3"
 MUTED = "#afb1b7"
 SOFT = "#73767e"
 
+PRESETS = {
+    "Équilibré": {"cloud_analysis_interval_seconds": 30, "cloud_per_hour": 1200,
+                  "cloud_adaptive_enabled": True, "cloud_heartbeat_enabled": False},
+    "Serveur critique": {"cloud_analysis_interval_seconds": 10, "cloud_per_hour": 3600,
+                         "cloud_adaptive_enabled": True, "cloud_heartbeat_enabled": False},
+}
+
+
+def _source(event: dict) -> str:
+    details = event.get("details") or {}
+    if not isinstance(details, dict):
+        details = {}
+    source = details.get("source") or event.get("source") or details.get("log_path")
+    if isinstance(source, dict):
+        source = source.get("name") or source.get("kind") or source.get("type")
+    return str(source or "Capteur local · voir la preuve")[:100]
+
+
+def _remaining(value: Any) -> str:
+    try:
+        seconds = max(0, int(value))
+        return f"{seconds} s" if seconds < 60 else f"{seconds // 60} min {seconds % 60:02d} s"
+    except (ValueError, TypeError, OverflowError):
+        return "non planifié"
+
 
 def _display(value: Any, limit: int = 18000) -> str:
     if isinstance(value, (dict, list, tuple)):
@@ -41,8 +66,10 @@ def _display(value: Any, limit: int = 18000) -> str:
 
 def _clock(value: Any) -> str:
     try:
+        if type(value) in (int, float):
+            return datetime.fromtimestamp(value).astimezone().strftime("%d/%m %H:%M:%S")
         return datetime.fromisoformat(str(value).replace("Z", "+00:00")).astimezone().strftime("%d/%m %H:%M:%S")
-    except (ValueError, TypeError, OverflowError):
+    except (ValueError, TypeError, OverflowError, OSError):
         return str(value or "—")[:24]
 
 
@@ -78,17 +105,27 @@ class DefenseApp:
         self._action_rows: dict[str, dict] = {}
         self._notification_rows: dict[str, dict] = {}
         self._order_rows: dict[str, dict] = {}
+        self._priority_rows: dict[str, dict] = {}
+        self._review_rows: dict[str, dict] = {}
+        self._network_rows: dict[str, dict] = {}
         self._launch_checked = False
         self._history: deque = deque(maxlen=100)
         self._last_sample: str | None = None
         self._settings_loaded = False
         self._chat_pending = False
+        self._pending_preset: str | None = None
         self._vars: dict[str, tk.Variable] = {}
         self._style()
-        root.title("SAWM Defense — Protection & activité")
+        root.title("SAWM Defense — Console de sécurité")
         root.geometry("1280x870")
         root.minsize(980, 660)
         root.configure(background=BG)
+        icon_path = Path(__file__).parent / "assets/sawm-defense-icon.png"
+        if icon_path.is_file():
+            self._app_icon = tk.PhotoImage(file=str(icon_path))
+            factor = max(1, round(max(self._app_icon.width(), self._app_icon.height()) / 128))
+            self._app_icon = self._app_icon.subsample(factor)
+            root.iconphoto(True, self._app_icon)
         root.protocol("WM_DELETE_WINDOW", self._close)
         if sys.platform == "darwin":
             # The native macOS app menu bypasses WM_DELETE_WINDOW by default.
@@ -114,6 +151,7 @@ class DefenseApp:
         style.configure("Card.TLabel", background=CARD)
         style.configure("CardMuted.TLabel", background=CARD, foreground=MUTED, font=(font, 10))
         style.configure("Value.TLabel", background=CARD, font=(font, 20, "bold"))
+        style.configure("Metric.TLabel", background=PANEL, font=(font, 14, "bold"))
         style.configure("Title.TLabel", font=(font, 25, "bold"))
         style.configure("Section.TLabel", font=(font, 14, "bold"))
         style.configure("TButton", background=CARD, foreground=TEXT, padding=(13, 9), borderwidth=1, focusthickness=1)
@@ -158,7 +196,7 @@ class DefenseApp:
             emblem.create_oval(5, 5, 43, 43, outline=MUTED, width=2)
             emblem.create_oval(18, 18, 30, 30, fill=TEXT, outline=TEXT)
         ttk.Label(header, text="SAWM DEFENSE", style="Title.TLabel").grid(row=0, column=1, sticky="w")
-        ttk.Label(header, text="BASIRA CLOUD  /  Votre poste, votre mémoire, vos autorisations", style="Muted.TLabel").grid(row=1, column=1, sticky="w", pady=(4, 0))
+        ttk.Label(header, text="CONSOLE DE SÉCURITÉ  /  Observer · Comprendre · Intervenir · Vérifier", style="Muted.TLabel").grid(row=1, column=1, sticky="w", pady=(4, 0))
         self.header_state = ttk.Label(header, text="INITIALISATION", style="Muted.TLabel")
         self.header_state.grid(row=0, column=2, sticky="e")
         ttk.Label(header, text="Console locale · actions traçables", style="Muted.TLabel").grid(row=1, column=2, sticky="e")
@@ -169,8 +207,9 @@ class DefenseApp:
         self.tabs = ttk.Notebook(content)
         self.tabs.grid(row=0, column=0, sticky="nsew")
         self.pages: dict[str, ttk.Frame] = {}
-        for key, title in [("overview", "Vue d’ensemble"), ("events", "Observations"),
-                           ("system", "Système"), ("autonomy", "Veille & missions"), ("chat", "Parler à SAWM"),
+        for key, title in [("overview", "Console SOC"), ("events", "Observations"),
+                           ("system", "Système"), ("network", "Réseau & accès"),
+                           ("autonomy", "Veille & missions"), ("chat", "SAWM"),
                            ("settings", "Réglages"), ("journal", "Journal")]:
             page = ttk.Frame(self.tabs, padding=(0, 10, 0, 0))
             self.tabs.add(page, text=title)
@@ -178,6 +217,7 @@ class DefenseApp:
         self._overview()
         self._observations()
         self._system()
+        self._network()
         self._autonomy()
         self._chat()
         self._settings()
@@ -193,49 +233,96 @@ class DefenseApp:
     def _overview(self) -> None:
         page = self.pages["overview"]
         page.columnconfigure(0, weight=1)
-        page.rowconfigure(2, weight=1)
+        page.rowconfigure(3, weight=1)
         tools = ttk.Frame(page)
-        tools.grid(row=0, column=0, sticky="ew", pady=(0, 15))
+        tools.grid(row=0, column=0, sticky="ew", pady=(0, 13))
         self.monitor_button = ttk.Button(tools, text="Démarrer la surveillance", style="Primary.TButton", command=self._toggle_monitor)
         self.monitor_button.pack(side="left")
-        ttk.Button(tools, text="Analyser un fichier", command=self._scan).pack(side="left", padx=8)
+        ttk.Button(tools, text="Inspecter un fichier", command=self._scan).pack(side="left", padx=8)
         ttk.Button(tools, text="Rapport d’activité ↗", command=self._export).pack(side="right")
+        ttk.Button(tools, text="Journal des décisions", command=lambda: self.tabs.select(self.pages["journal"])).pack(side="right", padx=8)
         cards = ttk.Frame(page)
-        cards.grid(row=1, column=0, sticky="ew", pady=(0, 16))
+        cards.grid(row=1, column=0, sticky="ew", pady=(0, 10))
         self.cards: dict[str, tuple[ttk.Label, ttk.Label]] = {}
-        for index, (name, title) in enumerate([("monitor", "SURVEILLANCE"), ("cloud", "SAWM + BASIRA"), ("av", "ANTIVIRUS LOCAL"), ("actions", "AUTOMATISATION")]):
+        for index, (name, title) in enumerate([("monitor", "VEILLE LOCALE"), ("incidents", "SIGNAUX À EXAMINER"), ("cloud", "ANALYSE SAWM"), ("budget", "BUDGET API / HEURE")]):
             cards.columnconfigure(index, weight=1, uniform="cards")
-            card = ttk.Frame(cards, padding=(15, 14), style="Card.TFrame")
+            card = ttk.Frame(cards, padding=(15, 12), style="Card.TFrame")
             card.grid(row=0, column=index, sticky="nsew", padx=(0 if index == 0 else 5, 0 if index == 3 else 5))
             ttk.Label(card, text=title, style="CardMuted.TLabel").pack(anchor="w")
             value = ttk.Label(card, text="—", style="Value.TLabel")
-            value.pack(anchor="w", pady=(10, 5))
+            value.pack(anchor="w", pady=(8, 4))
             detail = ttk.Label(card, text="En attente des mesures", style="CardMuted.TLabel", wraplength=230)
             detail.pack(anchor="w")
             self.cards[name] = (value, detail)
+        statusbar = ttk.Frame(page, style="Panel.TFrame", padding=(14, 9))
+        statusbar.grid(row=2, column=0, sticky="ew", pady=(0, 12))
+        for index, (name, title) in enumerate([("av", "SIGNATURES"), ("actions", "MANDAT")]):
+            statusbar.columnconfigure(index, weight=1, uniform="statusbar")
+            cell = ttk.Frame(statusbar, style="Panel.TFrame")
+            cell.grid(row=0, column=index, sticky="ew", padx=(0, 15))
+            value = ttk.Label(cell, text="—", style="Panel.TLabel", font=(self.font, 11, "bold"))
+            value.pack(anchor="w")
+            detail = ttk.Label(cell, text=title, style="Panel.TLabel", foreground=MUTED, wraplength=440)
+            detail.pack(anchor="w", pady=(3, 0))
+            self.cards[name] = (value, detail)
+        ttk.Button(statusbar, text="Capteurs & limites", command=self._show_coverage).grid(row=0, column=2, sticky="e")
         pane = ttk.Panedwindow(page, orient="horizontal")
-        pane.grid(row=2, column=0, sticky="nsew")
-        left = ttk.Frame(pane, style="Panel.TFrame", padding=15)
-        right = ttk.Frame(pane, style="Panel.TFrame", padding=15)
+        pane.grid(row=3, column=0, sticky="nsew")
+        left = ttk.Frame(pane, style="Panel.TFrame", padding=14)
+        right = ttk.Frame(pane, style="Panel.TFrame", padding=14)
         pane.add(left, weight=3)
         pane.add(right, weight=2)
         left.columnconfigure(0, weight=1)
         left.rowconfigure(1, weight=2)
-        left.rowconfigure(3, weight=2)
-        ttk.Label(left, text="Activité de la machine", style="Panel.TLabel", font=(self.font, 14, "bold")).grid(row=0, column=0, sticky="w")
-        self.chart = tk.Canvas(left, background=PANEL, highlightthickness=0, height=180)
-        self.chart.grid(row=1, column=0, sticky="nsew", pady=10)
+        left.rowconfigure(3, weight=3)
+        ttk.Label(left, text="Activité de la machine", style="Panel.TLabel", font=(self.font, 13, "bold")).grid(row=0, column=0, sticky="w")
+        self.chart = tk.Canvas(left, background=PANEL, highlightthickness=0, height=150)
+        self.chart.grid(row=1, column=0, sticky="nsew", pady=(4, 10))
         self.chart.bind("<Configure>", lambda event: self._draw_chart())
-        ttk.Label(left, text="Dernières observations", style="Panel.TLabel", font=(self.font, 12, "bold")).grid(row=2, column=0, sticky="w", pady=(9, 8))
-        self.recent_text = self._text(left, height=7)
-        self.recent_text.grid(row=3, column=0, sticky="nsew")
+        self.priority_note = ttk.Label(left, text="Observations prioritaires", style="Panel.TLabel", font=(self.font, 12, "bold"))
+        self.priority_note.grid(row=2, column=0, sticky="w", pady=(2, 8))
+        priority, self.priority_tree = self._tree(left, [("severity", "Niveau", 75), ("time", "Heure", 125), ("summary", "Observation", 300)], 5)
+        priority.grid(row=3, column=0, sticky="nsew")
+        self.priority_tree.bind("<Double-1>", self._open_priority)
+        ttk.Button(left, text="Ouvrir la preuve et les options →", command=self._open_priority).grid(row=4, column=0, sticky="w", pady=(9, 0))
         right.columnconfigure(0, weight=1)
-        right.rowconfigure(2, weight=1)
-        ttk.Label(right, text="Couverture effective", style="Panel.TLabel", font=(self.font, 14, "bold")).grid(row=0, column=0, sticky="w")
-        ttk.Label(right, text="Les droits du compte et les outils installés\ndéterminent ce qui peut être contrôlé.", style="Panel.TLabel", foreground=MUTED).grid(row=1, column=0, sticky="w", pady=(9, 13))
-        self.coverage_text = self._text(right, height=12)
-        self.coverage_text.grid(row=2, column=0, sticky="nsew")
-        ttk.Button(right, text="Configurer la protection →", command=lambda: self.tabs.select(self.pages["settings"])).grid(row=3, column=0, sticky="ew", pady=(12, 0))
+        right.rowconfigure(4, weight=1)
+        ttk.Label(right, text="Cycle de décision", style="Panel.TLabel", font=(self.font, 13, "bold")).grid(row=0, column=0, sticky="w")
+        self.scheduler_text = self._text(right, height=8)
+        self.scheduler_text.grid(row=1, column=0, sticky="ew", pady=(9, 7))
+        ttk.Button(right, text="Régler la cadence et le budget →", command=lambda: self.tabs.select(self.pages["settings"])).grid(row=2, column=0, sticky="w", pady=(0, 12))
+        self.review_note = ttk.Label(right, text="File d’analyse SAWM", style="Panel.TLabel", font=(self.font, 12, "bold"))
+        self.review_note.grid(row=3, column=0, sticky="w", pady=(0, 8))
+        review, self.review_tree = self._tree(right, [("severity", "Niveau", 75), ("source", "Source", 140), ("summary", "À analyser", 240)], 4)
+        review.grid(row=4, column=0, sticky="nsew")
+        self.review_tree.bind("<Double-1>", self._show_review)
+        ttk.Button(right, text="Ouvrir le suivi / la preuve →", command=self._show_review).grid(row=5, column=0, sticky="w", pady=(9, 0))
+        # Keep the current coverage as selectable text, opened on demand rather
+        # than allowing verbose capability messages to push incidents off-screen.
+        self.coverage_text = self._text(page, height=10)
+
+    def _show_coverage(self) -> None:
+        self._result_window("Capteurs, périmètre et limites", self.coverage_text.get("1.0", "end").strip())
+
+    def _open_priority(self, _event=None) -> None:
+        selected = self.priority_tree.selection()
+        if not selected or selected[0] not in self._priority_rows:
+            return
+        event_id = selected[0]
+        self.event_filter.set("Tous")
+        self._render_events()
+        if self.event_tree.exists(event_id):
+            self.tabs.select(self.pages["events"])
+            self.event_tree.selection_set(event_id)
+            self.event_tree.see(event_id)
+            self._show_event()
+        else:
+            self._result_window("Observation et provenance", self._priority_rows[event_id])
+
+    def _show_review(self, _event=None) -> None:
+        selected = self.review_tree.selection()
+        if selected and selected[0] in self._review_rows:
+            self._result_window("Analyse en attente · observation source", self._review_rows[selected[0]])
 
     def _tree(self, parent: Any, columns: list[tuple[str, str, int]], height: int = 8) -> tuple[ttk.Frame, ttk.Treeview]:
         frame = ttk.Frame(parent)
@@ -300,6 +387,75 @@ class DefenseApp:
         connections, self.connection_tree = self._tree(pane, [("pid", "PID", 75), ("local", "Adresse locale", 260), ("remote", "Adresse distante", 370), ("state", "État", 140)], 8)
         pane.add(processes, weight=1)
         pane.add(connections, weight=1)
+
+    def _network(self) -> None:
+        page = self.pages["network"]
+        page.columnconfigure(0, weight=1)
+        page.rowconfigure(2, weight=1)
+        bar = ttk.Frame(page)
+        bar.grid(row=0, column=0, sticky="ew")
+        ttk.Label(bar, text="Réseau, droits & annuaire", style="Section.TLabel").pack(side="left")
+        ttk.Button(bar, text="Configurer les sources →", command=lambda: self.tabs.select(self.pages["settings"])).pack(side="right")
+        self.network_note = ttk.Label(page, text="Collecte passive. Aucun changement de droits LDAP n’est effectué.", style="Muted.TLabel", wraplength=1100)
+        self.network_note.grid(row=1, column=0, sticky="w", pady=(8, 12))
+        pane = ttk.Panedwindow(page, orient="vertical")
+        pane.grid(row=2, column=0, sticky="nsew")
+        top = ttk.Frame(pane)
+        top.columnconfigure(0, weight=1)
+        top.rowconfigure(2, weight=1)
+        self.access_summary = self._text(top, height=4)
+        self.access_summary.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        filters = ttk.Frame(top)
+        filters.grid(row=1, column=0, sticky="ew", pady=(0, 8))
+        ttk.Label(filters, text="Historique visible", style="Section.TLabel").pack(side="left")
+        self.network_filter = tk.StringVar(value="Tous")
+        selector = ttk.Combobox(filters, textvariable=self.network_filter, state="readonly", width=21,
+                               values=["Tous", "Réseau", "Droits des fichiers", "LDAP / authentification"])
+        selector.pack(side="right")
+        selector.bind("<<ComboboxSelected>>", lambda event: self._render_network(self._status))
+        frame, self.network_tree = self._tree(top, [("time", "Heure", 135), ("severity", "Niveau", 85), ("source", "Provenance", 210), ("summary", "Observation", 560)], 7)
+        frame.grid(row=2, column=0, sticky="nsew")
+        self.network_tree.bind("<<TreeviewSelect>>", self._show_network_event)
+        pane.add(top, weight=3)
+        details = ttk.Frame(pane, padding=(0, 10, 0, 0))
+        details.columnconfigure(0, weight=1)
+        details.rowconfigure(1, weight=1)
+        ttk.Label(details, text="Preuve, attribution et limites", style="Section.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 8))
+        self.network_detail = self._text(details, height=6)
+        self.network_detail.grid(row=1, column=0, sticky="nsew")
+        self._set_text(self.network_detail, "Sélectionnez une observation. Une adresse réseau n’identifie pas une personne ; un journal LDAP importé ne prouve pas à lui seul l’auteur d’un changement.")
+        pane.add(details, weight=2)
+
+    def _render_network(self, status: dict) -> None:
+        settings = status.get("settings") or {}
+        network = status.get("network_security") or {}
+        access = status.get("access_monitor") or {}
+        enabled = network.get("enabled", settings.get("network_security_enabled", False))
+        self.network_note.configure(text=("Observation réseau active" if enabled else "Observation réseau désactivée") + " · Collecte passive, aucun balayage actif · Droits fichiers et journaux LDAP en lecture seule")
+        summary = [
+            f"Référence réseau : {network.get('baseline_count', 'n.d.')} entrée(s) · fenêtre {network.get('window_seconds', settings.get('network_window_seconds', 'n.d.'))} s",
+            f"Droits : {len(settings.get('access_monitor_paths') or [])} chemin(s) choisi(s) · LDAP : {len(settings.get('ldap_log_paths') or [])} journal(aux) choisi(s)",
+            f"Dernier relevé d’accès : {_clock(access.get('last_sample'))} · changements : {access.get('access_changes', 'n.d.')} · échecs LDAP : {access.get('ldap_failures', 'n.d.')}",
+            "L’absence d’alerte ne signifie pas que toutes les connexions et tous les droits sont visibles.",
+        ]
+        self._set_text(self.access_summary, "\n".join(summary))
+        choice = self.network_filter.get()
+        events = []
+        for event in status.get("events") or []:
+            kind = str(event.get("kind", ""))
+            family = "Réseau" if kind.startswith(("network_", "connection_")) else "Droits des fichiers" if kind.startswith("access_") else "LDAP / authentification" if kind.startswith(("ldap_", "auth_", "ssh_")) else None
+            if family and choice in {"Tous", family}:
+                events.append(event)
+        previous = self.network_tree.selection()
+        self._network_rows = {str(event.get("id", index)): event for index, event in enumerate(events)}
+        self._replace_tree(self.network_tree, [(key, (_clock(event.get("timestamp")), event.get("severity", "info"), _source(event), event.get("summary", ""))) for key, event in self._network_rows.items()])
+        if previous and previous[0] in self._network_rows:
+            self.network_tree.selection_set(previous[0])
+
+    def _show_network_event(self, _event=None) -> None:
+        selected = self.network_tree.selection()
+        if selected and selected[0] in self._network_rows:
+            self._set_text(self.network_detail, _display(self._network_rows[selected[0]]))
 
     def _autonomy(self) -> None:
         page = self.pages["autonomy"]
@@ -423,21 +579,40 @@ class DefenseApp:
             widget = self._text(section, height=4, readonly=False)
             widget.pack(fill="both", expand=True)
             self.scope_texts[key] = widget
-        controls = ttk.LabelFrame(body, text="05  Rythme, budget & démarrage", padding=15)
+        controls = ttk.LabelFrame(body, text="05  Cadence d’analyse & plafond Cloud", padding=15)
         controls.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(0, 15))
-        for index, (key, label, value, minimum, maximum) in enumerate([("poll_seconds", "Intervalle local (s)", 5, 1, 3600), ("cloud_per_hour", "Opérations Cloud / heure", 4, 0, 120), ("max_file_mb", "Taille analysable (Mo)", 100, 1, 2048), ("retention_days", "Rétention locale (jours)", 30, 1, 3650)]):
+        presets = ttk.Frame(controls)
+        presets.grid(row=0, column=0, columnspan=4, sticky="ew", pady=(0, 12))
+        self.preset_choice = tk.StringVar(value="Équilibré")
+        ttk.Label(presets, text="Préréglage", style="Muted.TLabel").pack(side="left", padx=(0, 10))
+        ttk.Combobox(presets, textvariable=self.preset_choice, values=list(PRESETS), state="readonly", width=20).pack(side="left")
+        ttk.Button(presets, text="Préparer ces réglages", command=self._apply_preset).pack(side="left", padx=8)
+        self.preset_note = ttk.Label(controls, text="Préparer modifie les valeurs visibles. Enregistrer les applique ; le Cloud et les interventions ne sont jamais activés par un préréglage.", style="Muted.TLabel", wraplength=1020)
+        self.preset_note.grid(row=1, column=0, columnspan=4, sticky="w", pady=(0, 12))
+        for index, (key, label, value, minimum, maximum) in enumerate([
+            ("poll_seconds", "Collecte locale (s)", 5, 1, 3600),
+            ("cloud_analysis_interval_seconds", "Revue SAWM de base (s)", 30, 10, 3600),
+            ("cloud_per_hour", "Requêtes API réelles / h", 1200, 0, 20000),
+            ("max_file_mb", "Taille analysable (Mo)", 100, 1, 2048),
+            ("retention_days", "Rétention locale (jours)", 30, 1, 3650),
+        ]):
             col = ttk.Frame(controls)
-            col.grid(row=0, column=index, sticky="ew", padx=(0, 16))
-            controls.columnconfigure(index, weight=1)
+            col.grid(row=2 + index // 4, column=index % 4, sticky="ew", padx=(0, 16), pady=(0, 12))
+            controls.columnconfigure(index % 4, weight=1)
             ttk.Label(col, text=label, style="Muted.TLabel").pack(anchor="w", pady=(0, 6))
             var = tk.StringVar(value=str(value))
             self._vars[key] = var
             ttk.Spinbox(col, from_=minimum, to=maximum, textvariable=var, width=11).pack(anchor="w")
+        self._vars["cloud_adaptive_enabled"] = tk.BooleanVar(value=True)
+        self._vars["cloud_heartbeat_enabled"] = tk.BooleanVar(value=False)
+        ttk.Checkbutton(controls, text="Adapter le rythme à la gravité et ralentir lorsque la situation est calme", variable=self._vars["cloud_adaptive_enabled"]).grid(row=4, column=0, columnspan=4, sticky="w")
+        ttk.Checkbutton(controls, text="Effectuer une revue périodique même sans alerte nouvelle (consomme des appels Cloud)", variable=self._vars["cloud_heartbeat_enabled"]).grid(row=5, column=0, columnspan=4, sticky="w")
+        ttk.Label(controls, text="0 requête/h = Cloud suspendu, jamais illimité. Une analyse ou une ingestion peut utiliser plusieurs requêtes. Ce plafond n’est pas un forfait en euros ; les jetons sont facturés selon votre offre. Le budget, les pannes et les reprises peuvent retarder une revue.", style="Muted.TLabel", wraplength=1020).grid(row=6, column=0, columnspan=4, sticky="w", pady=(8, 0))
         startup = ttk.Frame(controls)
-        startup.grid(row=1, column=0, columnspan=4, sticky="ew", pady=(16, 0))
+        startup.grid(row=7, column=0, columnspan=4, sticky="ew", pady=(16, 0))
         ttk.Button(startup, text="Activer au démarrage de session…", command=lambda: self._startup(True)).pack(side="left")
         ttk.Button(startup, text="Désactiver le démarrage…", command=lambda: self._startup(False)).pack(side="left", padx=8)
-        ttk.Label(controls, text="Service utilisateur supervisé. Les autorisations système supplémentaires ne sont jamais accordées silencieusement.", style="Muted.TLabel", wraplength=950).grid(row=2, column=0, columnspan=4, sticky="w", pady=(10, 0))
+        ttk.Label(controls, text="Service utilisateur supervisé. Les autorisations système supplémentaires ne sont jamais accordées silencieusement.", style="Muted.TLabel", wraplength=950).grid(row=8, column=0, columnspan=4, sticky="w", pady=(10, 0))
 
         autonomy = ttk.LabelFrame(body, text="06  Veille autonome & authentification", padding=15)
         autonomy.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(0, 15))
@@ -445,7 +620,7 @@ class DefenseApp:
         for index, (key, label, default) in enumerate([
             ("monitor_on_launch", "Démarrer la veille locale à l’ouverture de l’application", True),
             ("protect_downloads", "Surveiller aussi le dossier Téléchargements de cette session", True),
-            ("automatic_scan_enabled", "Analyser automatiquement les fichiers nouveaux ou modifiés avec l’antivirus local", True),
+            ("automatic_scan_enabled", "Inspecter les fichiers nouveaux ou modifiés, avec antivirus local s’il est disponible", True),
             ("notifications_enabled", "Envoyer les alertes au système de notifications du poste", True),
             ("autonomous_analysis_enabled", "Analyser les alertes avec SAWM en arrière-plan (budget Cloud respecté)", True),
             ("auth_journal_enabled", "Lire les événements SSH du journal système Linux, selon les droits disponibles", False),
@@ -477,6 +652,41 @@ class DefenseApp:
             widget.grid(row=10+2*index, column=0, columnspan=2, sticky="ew")
             self.scope_texts[key] = widget
 
+        network = ttk.LabelFrame(body, text="07  Réseau & accès · observation et politique locale", padding=15)
+        network.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(0, 15))
+        network.columnconfigure(0, weight=1)
+        for row, (key, label, default) in enumerate([
+            ("network_security_enabled", "Observer les changements de connexions et les séquences réseau inhabituelles", True),
+            ("autoblock_network_policy", "Autoriser le blocage des IP explicitement interdites ci-dessous, sur connexion attribuée", False),
+        ]):
+            self._vars[key] = tk.BooleanVar(value=default)
+            ttk.Checkbutton(network, text=label, variable=self._vars[key]).grid(row=row, column=0, sticky="w")
+        ttk.Label(network, text="Une IP autorisée au blocage est une cible sur laquelle vous permettez une action, pas une destination réseau de confiance. Les IP interdites définissent une politique distincte. Aucun changement automatique de compte, de groupe ou de droit LDAP.", style="Muted.TLabel", wraplength=1020).grid(row=2, column=0, sticky="w", pady=(8, 12))
+        fields = ttk.Frame(network)
+        fields.grid(row=3, column=0, sticky="ew")
+        for index, (key, label, value, minimum, maximum) in enumerate([
+            ("network_window_seconds", "Fenêtre réseau (s)", 300, 30, 3600),
+            ("network_port_scan_threshold", "Ports distincts avant alerte", 8, 3, 100),
+            ("network_fanout_threshold", "Destinations avant alerte", 12, 3, 100),
+            ("ldap_failure_threshold", "Échecs LDAP avant alerte", 5, 3, 100),
+            ("ldap_window_seconds", "Fenêtre LDAP (s)", 300, 30, 3600),
+        ]):
+            cell = ttk.Frame(fields)
+            cell.grid(row=index // 3, column=index % 3, sticky="ew", padx=(0, 15), pady=(0, 10))
+            fields.columnconfigure(index % 3, weight=1)
+            ttk.Label(cell, text=label, style="Muted.TLabel").pack(anchor="w")
+            self._vars[key] = tk.StringVar(value=str(value))
+            ttk.Spinbox(cell, from_=minimum, to=maximum, textvariable=self._vars[key], width=12).pack(anchor="w", pady=(5, 0))
+        for index, (key, label) in enumerate([
+            ("denied_remote_ips", "IP interdites par votre politique · adresses publiques exactes, une par ligne"),
+            ("access_monitor_paths", "Droits de fichiers à observer · chemins absolus, un par ligne"),
+            ("ldap_log_paths", "Journaux LDAP à lire · chemins absolus, un par ligne · source non authentifiée"),
+        ]):
+            ttk.Label(network, text=label, style="Muted.TLabel").grid(row=4 + 2 * index, column=0, sticky="w", pady=(10, 5))
+            widget = self._text(network, height=3, readonly=False)
+            widget.grid(row=5 + 2 * index, column=0, sticky="ew")
+            self.scope_texts[key] = widget
+
         def wheel(event):
             if isinstance(event.widget, (tk.Text, tk.Listbox, ttk.Spinbox)):
                 return None
@@ -496,6 +706,16 @@ class DefenseApp:
 
         bind_children(body)
         scroll.bind("<MouseWheel>", wheel)
+
+    def _apply_preset(self) -> None:
+        name = self.preset_choice.get()
+        values = PRESETS.get(name)
+        if not values:
+            return
+        for key, value in values.items():
+            self._vars[key].set(value)
+        self._pending_preset = name
+        self.preset_note.configure(text=f"{name} préparé : {values['cloud_analysis_interval_seconds']} s de base, plafond {values['cloud_per_hour']:,} requêtes API/h. Valeurs non enregistrées. Cloud, partage et mandat d’action inchangés.".replace(",", " "))
 
     def _journal(self) -> None:
         page = self.pages["journal"]
@@ -649,7 +869,7 @@ class DefenseApp:
         self.header_state.configure(text="SERVICE DE SURVEILLANCE ACTIF" if external else "SURVEILLANCE ACTIVE" if running else "SURVEILLANCE EN PAUSE")
         self.monitor_button.configure(text="Géré par le service utilisateur" if external else "Mettre en pause" if running else "Démarrer la surveillance", state="disabled" if external else "normal")
         npaths = len((status.get("downloads") or {}).get("effective_paths") or settings.get("monitor_paths") or [])
-        self.cards["monitor"][0].configure(text="Active" if running else "En pause")
+        self.cards["monitor"][0].configure(text="Active" if running or external else "En pause")
         self.cards["monitor"][1].configure(text=f"{npaths} dossier(s) · intervalle {settings.get('poll_seconds', 5)} s")
         cloud = status.get("cloud") or {}
         cloud_state = "Désactivé" if not cloud.get("enabled") else "À configurer" if not cloud.get("configured") else str(cloud.get("status") or "Configuré")
@@ -685,10 +905,10 @@ class DefenseApp:
         if not available:
             notes.append("○  Aucun moteur antivirus à signatures disponible\n   L’inspection structurelle continue. Aucun indicateur reconnu ne certifie pas un fichier sain.")
         self._set_text(self.coverage_text, "\n\n".join(notes) or "Démarrez la surveillance pour mesurer la couverture effective.")
-        events = status.get("events") or []
-        self._set_text(self.recent_text, "\n\n".join(f"{_clock(e.get('timestamp'))}  /  {e.get('severity', 'info')}\n{e.get('summary', e.get('kind', 'Observation'))}" for e in events[:7]) or "Aucune observation enregistrée. Ajoutez un dossier et démarrez la surveillance.")
+        self._render_soc(status)
         self._render_events()
         self._render_system(snapshot)
+        self._render_network(status)
         self._render_journal(status)
         self._render_autonomy(status)
         if not self._launch_checked:
@@ -697,6 +917,49 @@ class DefenseApp:
                 self._submit("monitor", "Démarrage de la veille locale", self.service.start, lambda result: self._request_status())
         key = status.get("key") or {}
         self.key_note.configure(text=(f"Clé disponible · {key.get('backend', 'stockage sécurisé ou session')} · laissez vide pour la conserver." if key.get("available") else "Aucune clé enregistrée. Stockage dans le trousseau système ou uniquement pour cette session."))
+
+    def _render_soc(self, status: dict) -> None:
+        cloud = status.get("cloud") or {}
+        scheduler = cloud.get("scheduler") or {}
+        budget = scheduler.get("budget") or {}
+        if budget.get("unit") == "api_requests":
+            limit, used, remaining = budget.get("limit"), budget.get("used"), budget.get("remaining")
+            self.cards["budget"][0].configure(text=f"{used if used is not None else '—'} / {limit if limit is not None else '—'}")
+            self.cards["budget"][1].configure(text="Plafond zéro · aucun appel autorisé" if limit == 0 else f"{remaining if remaining is not None else 'n.d.'} requête(s) restante(s) · renouvellement {_clock(budget.get('resets_at'))}")
+        else:
+            self.cards["budget"][0].configure(text="Non mesuré")
+            self.cards["budget"][1].configure(text="Compteur de requêtes API non disponible")
+        signals = [event for event in status.get("events") or [] if event.get("severity") in {"critical", "warning"}]
+        signals.sort(key=lambda event: (0 if event.get("severity") == "critical" else 1))
+        critical = sum(event.get("severity") == "critical" for event in signals)
+        self.cards["incidents"][0].configure(text=f"{len(signals)} signal(s)")
+        self.cards["incidents"][1].configure(text=f"{critical} critique(s) dans l’historique visible" if signals else "Aucun signal dans l’historique visible")
+        self.priority_note.configure(text=f"Priorités · {min(12, len(signals))} observation(s) affichée(s)")
+        self._priority_rows = {str(event.get("id", i)): event for i, event in enumerate(signals[:12])}
+        self._replace_tree(self.priority_tree, [(key, (event.get("severity", "info"), _clock(event.get("timestamp")), event.get("summary", event.get("kind", "")))) for key, event in self._priority_rows.items()])
+        states = {"disabled": "désactivée", "not_configured": "accès à configurer", "paused": "en pause",
+                  "idle": "en attente d’un signal", "waiting": "prochaine revue planifiée", "scheduled": "revue planifiée",
+                  "running": "analyse en cours", "analyzing": "analyse en cours", "budget_exhausted": "budget épuisé",
+                  "backoff": "reprise différée après erreur", "due": "revue à effectuer", "ready": "prête", "cloud_disabled": "Cloud désactivé"}
+        state = scheduler.get("state")
+        reason = scheduler.get("last_reason") or "Aucune justification de revue enregistrée"
+        next_review = _remaining(scheduler.get("next_review_in_seconds")) if scheduler.get("next_review_at") else "non planifiée"
+        if not scheduler:
+            self._set_text(self.scheduler_text, "Ordonnanceur non disponible.\n\nLes appels et les reçus restent consultables dans le journal. Aucun rythme de décision n’est déduit de l’animation de cette interface.")
+        else:
+            self._set_text(self.scheduler_text,
+                f"État : {states.get(state, str(state or 'non fourni'))}\n"
+                f"Dernière revue : {_clock(scheduler.get('last_review_at'))}\n"
+                f"Dernière réussite : {_clock(scheduler.get('last_success_at'))}\n"
+                f"Prochaine revue : {next_review} · {_clock(scheduler.get('next_review_at'))}\n"
+                f"Cadence de base / actuelle : {scheduler.get('interval_seconds', 'n.d.')} / {scheduler.get('effective_interval_seconds', 'n.d.')} s\n"
+                f"Revue sans alerte : {'activée' if scheduler.get('heartbeat_enabled') else 'désactivée'} · échecs successifs : {scheduler.get('consecutive_failures', 0)}\n"
+                f"Motif : {_display(reason, 800)}\n"
+                f"Sources de la dernière revue : {', '.join(str(value) for value in (scheduler.get('last_event_ids') or [])) or 'aucune fournie'}")
+        review = cloud.get("review_queue") or []
+        self._review_rows = {str(event.get("id", i)): event for i, event in enumerate(review[:20]) if isinstance(event, dict)}
+        self._replace_tree(self.review_tree, [(key, (event.get("severity", "info"), _source(event), event.get("summary", event.get("kind", "")))) for key, event in self._review_rows.items()])
+        self.review_note.configure(text=f"File d’analyse · {scheduler.get('queue_count', len(review))} en attente · {len(self._review_rows)} affichée(s)")
 
     def _load_settings(self, settings: dict) -> None:
         for key, var in self._vars.items():
@@ -901,7 +1164,7 @@ class DefenseApp:
             return
         try:
             patch = {key: var.get() for key, var in self._vars.items() if key not in {"api_key", "persist_key"}}
-            for key in ("poll_seconds", "cloud_per_hour", "max_file_mb", "retention_days", "auth_failure_threshold", "auth_window_seconds", "auto_block_seconds", "download_scan_settle_seconds"):
+            for key in ("poll_seconds", "cloud_per_hour", "cloud_analysis_interval_seconds", "max_file_mb", "retention_days", "auth_failure_threshold", "auth_window_seconds", "auto_block_seconds", "download_scan_settle_seconds", "network_window_seconds", "network_port_scan_threshold", "network_fanout_threshold", "ldap_failure_threshold", "ldap_window_seconds"):
                 patch[key] = int(patch[key])
             patch["monitor_paths"] = list(self.monitor_paths.get(0, "end"))
             patch["automatic_actions"] = [key for key, var in self.auto_vars.items() if var.get()]
@@ -914,13 +1177,41 @@ class DefenseApp:
         old_settings = self._status.get("settings") or {}
         if patch.get("autoblock_auth_ips") and not old_settings.get("autoblock_auth_ips"):
             expanded.add("blocage temporaire des sources SSH attribuées")
+        if patch.get("autoblock_network_policy") and not old_settings.get("autoblock_network_policy"):
+            expanded.add("blocage de destinations interdites par la politique locale")
+        if patch["automatic_actions"]:
+            for field, label in (("allowed_process_paths", "nouveaux exécutables autorisés à l’arrêt"),
+                                 ("allowed_remote_ips", "nouvelles IP autorisées au blocage"),
+                                 ("denied_remote_ips", "nouvelles IP interdites")):
+                if set(patch.get(field) or []) - set(old_settings.get(field) or []):
+                    expanded.add(label)
+            for field in ("protected_paths", "protected_remote_ips"):
+                if set(old_settings.get(field) or []) - set(patch.get(field) or []):
+                    expanded.add("retrait d’exclusions de protection")
         if expanded and not messagebox.askokcancel("Autoriser des interventions automatiques", "Vous autorisez : " + ", ".join(sorted(expanded)) + ".\n\nCes interventions restent soumises aux preuves locales et aux périmètres. Un arrêt de processus peut perdre son travail ; un blocage IP peut couper un accès. Le blocage des sources SSH utilise un journal système fiable et les IP protégées sont exclues. Vérifiez ces réglages avant de confirmer.", parent=self.root):
+            return
+        changed_cloud = []
+        if patch["cloud_enabled"] and not old_settings.get("cloud_enabled"):
+            changed_cloud.append("activer les analyses et le dialogue Cloud")
+        if patch["cloud_upload_enabled"] and not old_settings.get("cloud_upload_enabled"):
+            changed_cloud.append("transmettre les métadonnées d’observation à votre espace Basira")
+        if patch["cloud_per_hour"] > old_settings.get("cloud_per_hour", 0):
+            changed_cloud.append(f"porter le plafond à {patch['cloud_per_hour']} requêtes API réelles par heure")
+        if patch["cloud_analysis_interval_seconds"] < old_settings.get("cloud_analysis_interval_seconds", 30):
+            changed_cloud.append(f"rapprocher les revues à {patch['cloud_analysis_interval_seconds']} secondes de base")
+        if patch["cloud_heartbeat_enabled"] and not old_settings.get("cloud_heartbeat_enabled"):
+            changed_cloud.append("demander une revue périodique même sans nouvelle alerte")
+        if self._pending_preset:
+            changed_cloud.insert(0, f"enregistrer les valeurs visibles du préréglage {self._pending_preset}")
+        if changed_cloud and not messagebox.askokcancel("Confirmer cadence, partage et budget", "Vous allez " + "; ".join(changed_cloud) + ".\n\nLes requêtes et jetons Cloud peuvent être facturés selon votre offre. Un plafond de 0 suspend les appels, il ne signifie jamais illimité. Une revue peut demander plusieurs requêtes. Ce réglage n’accorde aucun droit d’intervention supplémentaire.\n\nCloud : " + ("activé" if patch["cloud_enabled"] else "désactivé") + " · partage : " + ("autorisé" if patch["cloud_upload_enabled"] else "désactivé") + ".", parent=self.root):
             return
         key = self._vars["api_key"].get().strip() or None
         persist = bool(self._vars["persist_key"].get())
 
         def saved(result):
             self._vars["api_key"].set("")
+            self._pending_preset = None
+            self.preset_note.configure(text="Réglages enregistrés. Les mesures et la prochaine revue sont visibles dans la console SOC.")
             self.status_text.configure(text="Réglages enregistrés.")
             if check:
                 self._submit("cloud_check", "Vérification des accès Cloud", self.service.check_connection, lambda value: self._result_window("Accès Cloud", value))

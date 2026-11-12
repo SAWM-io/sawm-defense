@@ -104,6 +104,9 @@ def test_background_resume_after_failure_and_restart_acknowledges_only_confirmed
             return {"status":"pending","event_ids":[e["id"]]}
     monkeypatch.setattr(service,"CloudBridge",Online)
     try:
+        # A restart must preserve the outage backoff, not retry immediately.
+        assert not reopened.scheduler.upload_due()
+        monkeypatch.setattr(reopened.scheduler, "clock", lambda: reopened.scheduler._state["next_upload_at"]+1)
         one_background_cycle(reopened)
         assert {v["id"] for v in reopened.store.pending()}==initial-{e["id"]}
         assert sent.count(e["id"])==2

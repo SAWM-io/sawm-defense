@@ -17,7 +17,7 @@ from . import __version__
 from .config import ConfigManager, default_state_dir, validate_config
 from .storage import Store
 from .secrets import SecretVault
-from .cloud import CloudBridge
+from .cloud import CloudBridge, CloudBudgetExceeded
 from .platforms import Collector, no_symlink
 from .antivirus import Antivirus
 from .actions import ActionExecutor
@@ -27,6 +27,9 @@ from .downloads import effective_config, downloads_directory, StableFiles
 from .security_sensors import Sensor
 from .notifications import NotificationCenter
 from .orders import OrderQueue
+from .scheduler import SOCScheduler
+from .network_security import NetworkSecurity
+from .access_monitor import AccessMonitor
 
 
 def utc():
@@ -73,8 +76,11 @@ class AgentService:
         self.vault = self._vault_for(self._settings)
         self.collector = Collector(effective_config(self._settings))
         self.security = Sensor(self._settings, self.state_dir)
+        self.network_security = NetworkSecurity(self._settings, self.state_dir)
+        self.access_monitor = AccessMonitor(self._settings, self.state_dir)
         self.notifications = NotificationCenter(self.state_dir)
         self.orders = OrderQueue(self.state_dir)
+        self.scheduler = SOCScheduler(self.store)
         self._stable_files = StableFiles()
         self.av = Antivirus()
         self.executor = ActionExecutor(self.state_dir)
@@ -152,6 +158,8 @@ class AgentService:
             self._settings = updated
             self.collector.update_config(effective_config(updated))
             self.security.update_config(updated)
+            self.network_security.update_config(updated)
+            self.access_monitor.update_config(updated)
         self._event("settings_changed", "info", "Configuration locale mise à jour.",
                     {"fields": sorted(patch), "key_changed": bool(api_key)})
         self._wake.set()
@@ -177,11 +185,15 @@ class AgentService:
                 pass
         cloud.update(configured=self._configured(), enabled=settings["cloud_enabled"],
                      queued=len(self.store.pending(limit=1000)))
+        cloud["scheduler"] = self.scheduler.status(settings, enabled=bool(
+            settings["cloud_enabled"] and settings["cloud_upload_enabled"] and self._configured()))
+        cloud["review_queue"] = self.store.review_batch(20)
         return {"running": self._running or external, "external_monitor": external, "settings": settings, "snapshot": snapshot,
                 "events": self.store.events(limit=200), "actions": self.store.actions(limit=100),
                 "calls": self.store.calls(limit=100), "cloud": cloud,
                 "journal": self._journal, "antivirus": self.av.capabilities(),
-                "security_capabilities": self.security.capabilities(),
+                "security_capabilities": self.security.capabilities()+self.network_security.capabilities()+self.access_monitor.capabilities(),
+                "network_security": self.network_security.status(), "access_monitor": self.access_monitor.status(),
                 "file_inspection": {"available": True, "mode": "static-no-execution", "antivirus_equivalent": False},
                 "downloads": {"enabled": settings["protect_downloads"], "path": str(downloads_directory()),
                               "effective_paths": effective_config(settings)["monitor_paths"]},
@@ -206,10 +218,14 @@ class AgentService:
                 self.store.enqueue_scan(event)
             if severity in ("warning", "critical"):
                 self.store.enqueue_work("notify", event)
-                if kind in {"resource_pressure", "antivirus_detection", "file_suspicious", "auth_bruteforce"}:
+                if kind in {"resource_pressure", "antivirus_detection", "file_suspicious", "auth_bruteforce",
+                            "network_suspicious", "access_policy_changed", "network_port_scan", "network_fanout",
+                            "network_policy_violation", "access_permission_changed", "ldap_auth_burst",
+                            "ldap_access_change", "access_sensor_gap"}:
                     self.store.enqueue_work("review", event)
-            if kind == "auth_bruteforce":
+            if kind in {"auth_bruteforce", "network_policy_violation"}:
                 self.store.enqueue_work("respond", event)
+        self._wake.set()
         return event
 
     def tick(self):
@@ -225,11 +241,15 @@ class AgentService:
                     self._settings = updated
                     self.collector.update_config(effective_config(updated))
                     self.security.update_config(updated)
+                    self.network_security.update_config(updated)
+                    self.access_monitor.update_config(updated)
                     if identity_changed:
                         self.vault = self._vault_for(updated)
                         self._key = self.vault.get()
             snapshot, events = self.collector.sample()
             events.extend(self.security.sample())
+            events.extend(self.network_security.sample(snapshot))
+            events.extend(self.access_monitor.sample())
             with self._lock:
                 self._snapshot = snapshot
             fd, temporary = tempfile.mkstemp(prefix=".snapshot-", dir=self.state_dir)
@@ -288,41 +308,66 @@ class AgentService:
 
     def _background(self):
         while not self._stop.is_set():
-            self._wake.wait(timeout=30)
+            # Events wake this worker promptly; cadence/backoff still gate calls.
+            # No Cloud work occurs on the sensor thread.
+            self._wake.wait(timeout=1)
             self._wake.clear()
             if self._stop.is_set():
                 break
-            current = self.config.load()
-            if current["cloud_enabled"] and current["space_id"] and current["entity_id"] and not self._key:
-                # A separate GUI may add the first key after the daemon started.
-                # Do not let a cached 'unconfigured' state suppress that transition.
+            try:
+                self._background_cycle()
+            except Exception as exc:
+                self._worker_error("cloud_scheduler", exc)
+
+    def _background_cycle(self):
+        current = self.config.load()
+        if current["cloud_enabled"] and current["space_id"] and current["entity_id"] and not self._key:
+            with self._lock:
+                self.vault = self._vault_for(current)
+                self._key = self.vault.get()
+        if not current["cloud_enabled"] or not self._configured() or not current["cloud_upload_enabled"]:
+            return
+        if self._cloud_lock.locked():
+            return  # A manual chat/review is active; never overlap the model.
+        # Review first, then independently try ingestion: a failed model must
+        # never prevent delivery to an otherwise healthy memory endpoint.
+        if self.scheduler.review_due(current):
+            candidates = self.store.review_batch(5)
+            if not candidates and current["cloud_heartbeat_enabled"]:
                 with self._lock:
-                    self.vault = self._vault_for(current)
-                    self._key = self.vault.get()
-            if not current["cloud_enabled"] or not self._configured() or not current["cloud_upload_enabled"]:
-                continue
-            # Upload and review get independent attempts. A failed judge must
-            # never prevent evidence from reaching a healthy ingestion endpoint.
-            operations = ["upload", "review"] if not getattr(self, "_review_first", False) else ["review", "upload"]
-            self._review_first = not getattr(self, "_review_first", False)
-            for operation in operations:
-                if self._stop.is_set():
-                    break
+                    snapshot = json.loads(json.dumps(self._snapshot))
+                candidates = [self._event("soc_heartbeat", "info", "Revue périodique de l'état observé ; couverture explicitement limitée.",
+                    {"cpu_percent": snapshot.get("cpu_percent"), "memory_percent": snapshot.get("memory_percent"),
+                     "sampled_at": snapshot.get("sampled_at"), "coverage": snapshot.get("coverage", {}),
+                     "review_context": "periodic_snapshot_not_new_evidence"})]
+            if candidates:
+                self.scheduler.started(candidates)
                 try:
-                    if operation == "review" and current["autonomous_analysis_enabled"]:
-                        candidates = self.store.pending_work("review", limit=1)
-                        if candidates:
-                            candidate = candidates[0]
-                            self.analyze(candidate["id"])
-                            self.store.ack_work("review", candidate["id"])
-                    elif operation == "upload":
-                        batch = self.store.pending(limit=5)
-                        if batch:
-                            result = self._cloud_call("upload", batch)
-                            self.store.ack_pending(result.get("event_ids", []))
+                    self._analyze_events(candidates)
+                    for candidate in candidates:
+                        self.store.ack_work("review", candidate["id"])
+                    self.scheduler.succeeded()
                 except Exception as exc:
+                    self.scheduler.failed(current, budget=isinstance(exc, CloudBudgetExceeded))
                     with self._lock:
                         self._cloud_state.update(status="indisponible", last_error=type(exc).__name__)
+        if self._stop.is_set() or not self.scheduler.upload_due():
+            return
+        budget = self.store.cloud_budget(current["cloud_per_hour"])
+        # Two requests per event: idempotent enqueue and receipt read.
+        available_events = min(5, budget["remaining"]//2)
+        batch = self.store.pending(limit=available_events) if available_events else []
+        if not batch:
+            return
+        try:
+            result = self._cloud_call("upload", batch)
+            self.store.ack_pending(result.get("event_ids", []))
+            self.scheduler.upload_finished(current, failed=result.get("status") == "error",
+                                           budget=result.get("error_code") == "local_budget_exhausted")
+        except Exception as exc:
+            self.scheduler.upload_finished(current, failed=True, budget=isinstance(exc, CloudBudgetExceeded))
+            with self._lock:
+                self._cloud_state.update(status="indisponible", last_error=type(exc).__name__)
 
     def _scan_pending(self):
         current = self.config.load()
@@ -522,11 +567,25 @@ class AgentService:
                     raise ValueError("L'envoi des observations Cloud n'est pas autorisé.")
                 if method == "chat" and not settings["cloud_upload_enabled"]:
                     args = (args[0], [])
-                if not self.store.reserve_cloud(settings["cloud_per_hour"]):
-                    raise ValueError("Budget Cloud horaire atteint. La surveillance locale continue.")
             identity = str(self.state_dir) + ":" + settings["cloud_base_url"] + ":" + settings["space_id"] + ":" + settings["entity_id"]
             session_id = "defense-" + hashlib.sha256(identity.encode()).hexdigest()[:32]
-            bridge = CloudBridge(settings, key, self.store.record_call, session_id=session_id)
+            def reserve_request(operation):
+                # Re-check durable consent between the individual API requests
+                # of one analysis (TSST, ODVL, SAWM). Revocation takes effect
+                # before its next request, not only before the next analysis.
+                with self._lock, self._state_guard():
+                    latest = self.config.load()
+                    if any(latest[k] != settings[k] for k in ("cloud_base_url", "space_id", "entity_id")):
+                        raise ValueError("Destination Cloud modifiée ; nouvelle opération requise.")
+                    if method != "check" and not latest["cloud_enabled"]:
+                        raise ValueError("Échanges Cloud désactivés.")
+                    if method in ("upload", "analyze") and not latest["cloud_upload_enabled"]:
+                        raise ValueError("Partage des observations révoqué.")
+                    if method == "chat" and args[1] and not latest["cloud_upload_enabled"]:
+                        raise ValueError("Partage du contexte révoqué.")
+                    if not self.store.reserve_cloud(latest["cloud_per_hour"]):
+                        raise CloudBudgetExceeded("Budget Cloud horaire atteint. La surveillance locale continue.")
+            bridge = CloudBridge(settings, key, self.store.record_call, session_id=session_id, reserve_request=reserve_request)
             result = getattr(bridge, method)(*args)
             with self._lock:
                 self._cloud_state.update(status="indisponible" if result.get("status") == "error" else "connecté", last_error="" if result.get("status") != "error" else "Événements non confirmés conservés")
@@ -536,10 +595,16 @@ class AgentService:
                 self._cloud_state.update(status="indisponible", last_error=type(exc).__name__)
             raise
         finally:
-            if bridge:
-                bridge.close()
-            self._operation_lock.release()
-            self._cloud_lock.release()
+            try:
+                if bridge:
+                    bridge.close()
+            finally:
+                # A transport shutdown error must not permanently strand the
+                # profile behind its process/thread operation locks.
+                try:
+                    self._operation_lock.release()
+                finally:
+                    self._cloud_lock.release()
 
     def check_connection(self):
         return self._cloud_call("check")
@@ -552,6 +617,9 @@ class AgentService:
             events = [event]
         else:
             events = self.store.events(limit=20)
+        return self._analyze_events(events)
+
+    def _analyze_events(self, events):
         if not self._settings["cloud_upload_enabled"]:
             raise ValueError("Autorisez l'envoi des observations au Cloud avant de demander leur analyse.")
         result = self._cloud_call("analyze", events, self.settings()["automatic_actions"])

@@ -29,6 +29,31 @@ def trusted_auth_event(event, config):
         return False
 
 
+def trusted_network_policy_event(event, config):
+    """Only a fresh OS socket violating an explicit, still-current IP policy.
+
+    These fields are created by the local collector/service. Remote JSON is not
+    an event-ingestion API and cannot establish this provenance.
+    """
+    d = event.get("details", {})
+    try:
+        ip = str(ipaddress.ip_address(d.get("remote_ip")))
+        age = (datetime.now(timezone.utc) - datetime.fromisoformat(d["observed_at"].replace("Z", "+00:00"))).total_seconds()
+        return (config.get("network_security_enabled", True) is True
+                and config.get("autoblock_network_policy") is True
+                and event.get("kind") == "network_policy_violation"
+                and d.get("verified_local") is True and d.get("verification_origin") == "local_psutil_socket"
+                and d.get("policy_violation") is True and d.get("policy_rule") == "denied_remote_ips"
+                and d.get("policy_value") == ip
+                and ip in config.get("denied_remote_ips", []) and ip in config.get("allowed_remote_ips", [])
+                and ip not in config.get("protected_remote_ips", []) and ipaddress.ip_address(ip).is_global
+                and type(d.get("remote_port")) is int and 1 <= d["remote_port"] <= 65535
+                and 0 <= age <= 30 and isinstance(d.get("evidence_ids"), list)
+                and bool(d["evidence_ids"]) and all(isinstance(v, str) and len(v) == 64 for v in d["evidence_ids"]))
+    except (ValueError, TypeError, KeyError, AttributeError):
+        return False
+
+
 def authorize(action, event, config, *, approved=False):
     if action not in ACTIONS:
         return False, "Action inconnue : aucune commande libre n'est exécutée."
@@ -47,6 +72,8 @@ def authorize(action, event, config, *, approved=False):
     if action not in config.get("automatic_actions", []):
         return False, "Cette action demande une confirmation humaine."
     details = event.get("details", {})
+    if action == "block_ip" and trusted_network_policy_event(event, config):
+        return True, "Socket OS récent vers une IP interdite ; blocage de cette cible explicitement autorisé."
     if action == "block_ip" and trusted_auth_event(event, config):
         return True, "Échecs SSH attribués à sshd local, seuil dépassé et blocage autorisé."
     # Only the scanner's locally-created record is eligible. LLM confidence,

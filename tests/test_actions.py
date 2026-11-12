@@ -336,3 +336,35 @@ def test_windows_native_rule_roundtrip_uses_scoped_argv(setup,monkeypatch):
     assert result["status"]=="completed" and result["verified"]
     assert not installed
     assert all("all" not in cmd for cmd in commands)
+
+
+def network_policy_event():
+    ip = "93.184.216.34"
+    return {"id": "network-policy", "kind": "network_policy_violation", "timestamp": actions.utc_now(), "details": {
+        "remote_ip": ip, "remote_port": 443, "verified_local": True, "verification_origin": "local_psutil_socket",
+        "policy_violation": True, "policy_rule": "denied_remote_ips", "policy_value": ip,
+        "observed_at": actions.utc_now(), "evidence_ids": ["a" * 64]}}
+
+
+def test_explicit_network_policy_uses_existing_verified_expiring_firewall_path(setup, monkeypatch):
+    executor, config, _, _ = setup
+    config.update({"_automatic_response": True, "autoblock_network_policy": True,
+                   "denied_remote_ips": ["93.184.216.34"], "allowed_remote_ips": ["93.184.216.34"],
+                   "auto_block_seconds": 120})
+    state = firewall_stub(executor, monkeypatch)
+    result = executor.execute("block_ip", network_policy_event(), config)
+    assert result["status"] == "completed" and result["verified"]
+    assert set(state["rules"]) == {"in", "out"}
+    assert 110 < result["expires_at"] - time.time() <= 120
+    assert executor.rollback(result, config)["status"] == "completed"
+    assert not state["rules"]
+
+
+@pytest.mark.parametrize("patch", [{"allowed_remote_ips": []}, {"denied_remote_ips": []},
+                                  {"autoblock_network_policy": False}, {"protected_remote_ips": ["93.184.216.34"]}])
+def test_network_auto_response_rechecks_policy_without_touching_firewall(setup, monkeypatch, patch):
+    executor, config, _, _ = setup
+    config.update({"_automatic_response": True, "autoblock_network_policy": True,
+                   "denied_remote_ips": ["93.184.216.34"], "allowed_remote_ips": ["93.184.216.34"], **patch})
+    monkeypatch.setattr(actions.subprocess, "run", lambda *a, **k: pytest.fail("Revoked network policy must not reach firewall"))
+    assert executor.execute("block_ip", network_policy_event(), config)["status"] == "denied"

@@ -16,7 +16,9 @@ DEFAULTS = {
     "cloud_enabled": False, "cloud_upload_enabled": False,
     "cloud_base_url": "https://basira-api.sawm.io/api/v1/basira",
     "space_id": "", "entity_id": "", "monitor_paths": [],
-    "poll_seconds": 5, "cloud_per_hour": 4, "automatic_actions": [],
+    "poll_seconds": 5, "cloud_per_hour": 1200, "automatic_actions": [],
+    "cloud_analysis_interval_seconds": 30, "cloud_adaptive_enabled": True,
+    "cloud_heartbeat_enabled": False,
     "allowed_process_paths": [], "allowed_remote_ips": [], "protected_paths": [],
     "max_file_mb": 100, "retention_days": 30,
     "monitor_on_launch": True, "notifications_enabled": True,
@@ -26,6 +28,11 @@ DEFAULTS = {
     "auth_failure_threshold": 5, "auth_window_seconds": 300,
     "autoblock_auth_ips": False, "protected_remote_ips": [], "auto_block_seconds": 600,
     "kernel_audit_paths": [],
+    "network_security_enabled": True, "network_window_seconds": 300,
+    "network_port_scan_threshold": 8, "network_fanout_threshold": 12,
+    "denied_remote_ips": [], "autoblock_network_policy": False,
+    "access_monitor_paths": [], "ldap_log_paths": [],
+    "ldap_failure_threshold": 5, "ldap_window_seconds": 300,
 }
 
 
@@ -54,10 +61,15 @@ def validate_config(config: dict) -> dict:
     out.update(copy.deepcopy(config))
     for key in ("cloud_enabled", "cloud_upload_enabled", "monitor_on_launch", "notifications_enabled",
                 "protect_downloads", "automatic_scan_enabled", "autonomous_analysis_enabled",
-                "auth_journal_enabled", "autoblock_auth_ips"):
+                "auth_journal_enabled", "autoblock_auth_ips", "cloud_adaptive_enabled", "cloud_heartbeat_enabled",
+                "network_security_enabled", "autoblock_network_policy"):
         if type(out[key]) is not bool:
             raise ValueError(f"{key} doit être un booléen.")
-    for key, low, high in (("poll_seconds", 1, 3600), ("cloud_per_hour", 0, 120),
+    for key, low, high in (("poll_seconds", 1, 3600), ("cloud_per_hour", 0, 20000),
+                           ("cloud_analysis_interval_seconds", 10, 3600),
+                           ("network_window_seconds", 30, 3600), ("network_port_scan_threshold", 3, 100),
+                           ("network_fanout_threshold", 3, 100), ("ldap_failure_threshold", 3, 100),
+                           ("ldap_window_seconds", 30, 3600),
                            ("max_file_mb", 1, 2048), ("retention_days", 1, 3650),
                            ("download_scan_settle_seconds", 1, 120), ("auth_failure_threshold", 3, 100),
                            ("auth_window_seconds", 30, 3600), ("auto_block_seconds", 60, 3600)):
@@ -74,7 +86,8 @@ def validate_config(config: dict) -> dict:
         value = out[key]
         if not isinstance(value, str) or (value and not re.fullmatch(pattern, value)):
             raise ValueError(f"{key} invalide.")
-    for key in ("monitor_paths", "protected_paths", "allowed_process_paths", "auth_log_paths", "kernel_audit_paths"):
+    for key in ("monitor_paths", "protected_paths", "allowed_process_paths", "auth_log_paths", "kernel_audit_paths",
+                "access_monitor_paths", "ldap_log_paths"):
         values = out[key]
         if not isinstance(values, list) or len(values) > 100:
             raise ValueError(f"{key} exige une liste de 100 chemins au maximum.")
@@ -104,6 +117,15 @@ def validate_config(config: dict) -> dict:
             raise ValueError("Seules des adresses IP publiques individuelles sont autorisées.")
         normalized_ips.append(str(address))
     out["allowed_remote_ips"] = list(dict.fromkeys(normalized_ips))
+    denied = out["denied_remote_ips"]
+    if not isinstance(denied, list) or len(denied) > 100:
+        raise ValueError("Liste d'adresses interdites invalide.")
+    try:
+        if any(not isinstance(v, str) for v in denied):
+            raise ValueError
+        out["denied_remote_ips"] = list(dict.fromkeys(str(ipaddress.ip_address(v)) for v in denied))
+    except ValueError:
+        raise ValueError("Adresses interdites : IP individuelles requises.") from None
     protected = out["protected_remote_ips"]
     if not isinstance(protected, list) or len(protected) > 100 or any(not isinstance(v, str) for v in protected):
         raise ValueError("Liste d'adresses protégées invalide.")
@@ -128,7 +150,14 @@ class ConfigManager:
                 return copy.deepcopy(DEFAULTS)
             if self.config_path.stat().st_size > 131072:
                 raise ValueError("Configuration trop volumineuse.")
-            return validate_config(json.loads(self.config_path.read_text(encoding="utf-8")))
+            persisted = json.loads(self.config_path.read_text(encoding="utf-8"))
+            # Existing profiles never silently acquire a larger spending limit.
+            # Older partial configs inherited four operations/hour; keep four,
+            # now counted more strictly as API request attempts.
+            if isinstance(persisted, dict):
+                persisted.setdefault("cloud_per_hour", 4)
+                persisted.setdefault("network_security_enabled", False)
+            return validate_config(persisted)
 
     def save(self, patch: dict) -> dict:
         with self._lock:

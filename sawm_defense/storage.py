@@ -211,7 +211,7 @@ class Store:
             self._db.executemany("DELETE FROM scan_queue WHERE identifier=?",((i,) for i in identifiers))
 
     def reserve_cloud(self, limit_per_hour):
-        if type(limit_per_hour) is not int or not 0 <= limit_per_hour <= 120:
+        if type(limit_per_hour) is not int or not 0 <= limit_per_hour <= 20000:
             raise ValueError("Budget Cloud invalide.")
         now = time.time()
         with self._lock:
@@ -227,6 +227,47 @@ class Store:
             except Exception:
                 self._db.rollback()
                 raise
+
+    def cloud_budget(self, limit_per_hour):
+        if type(limit_per_hour) is not int or not 0 <= limit_per_hour <= 20000:
+            raise ValueError("Budget Cloud invalide.")
+        now = time.time()
+        with self._lock:
+            row = self._db.execute("SELECT COUNT(*),MIN(reserved) FROM budget WHERE reserved>=?", (now-3600,)).fetchone()
+        return {"unit": "api_requests", "limit": limit_per_hour, "used": row[0],
+                "remaining": max(0, limit_per_hour-row[0]), "resets_at": row[1]+3600 if row[1] is not None else None}
+
+    def runtime_state(self, name):
+        with self._lock:
+            row = self._db.execute("SELECT value FROM metadata WHERE key=?", ("runtime:"+name,)).fetchone()
+        return json.loads(row[0]) if row else {}
+
+    def save_runtime_state(self, name, value):
+        payload = _json(value)
+        with self._lock, self._db:
+            self._db.execute("INSERT OR REPLACE INTO metadata VALUES (?,?)", ("runtime:"+name,payload))
+
+    def review_stats(self):
+        with self._lock:
+            rows = self._db.execute("SELECT json_extract(payload,'$.severity'),COUNT(*) FROM local_work WHERE kind='review' GROUP BY json_extract(payload,'$.severity')").fetchall()
+        counts = dict(rows)
+        return {"queue_count": sum(counts.values()), "critical_count": counts.get("critical",0), "warning_count": counts.get("warning",0)}
+
+    def review_batch(self, limit=5):
+        """Prioritize urgent events, reserving one slot for the oldest waiting item."""
+        self._limit(limit)
+        with self._lock:
+            urgent = self._db.execute("SELECT identifier,payload FROM local_work WHERE kind='review' ORDER BY CASE json_extract(payload,'$.severity') WHEN 'critical' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END,enqueued,identifier LIMIT ?", (max(1,limit-1),)).fetchall()
+            oldest = self._db.execute("SELECT identifier,payload FROM local_work WHERE kind='review' ORDER BY enqueued,identifier LIMIT ?", (limit,)).fetchall()
+        chosen = list(urgent)
+        known = {row[0] for row in chosen}
+        for row in oldest:
+            if len(chosen) >= limit:
+                break
+            if row[0] not in known:
+                chosen.append(row)
+                known.add(row[0])
+        return [json.loads(row[1]) for row in chosen]
 
     def enqueue_work(self, kind, event):
         if kind not in {"notify", "respond", "review"}:

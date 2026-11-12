@@ -153,8 +153,10 @@ def test_cloud_budget_survives_restart(app, monkeypatch):
     agent, _ = app
     agent.save_settings({"cloud_enabled": True, "cloud_per_hour": 1, "space_id": "demo", "entity_id": "ent_"+"a"*32}, api_key="fake-test-key", persist_key=False)
     class FakeCloud:
-        def __init__(self, *args, **kwargs): pass
-        def check(self): return {"status": "connected"}
+        def __init__(self, *args, **kwargs): self.reserve = kwargs["reserve_request"]
+        def check(self):
+            self.reserve("one-test-request")
+            return {"status": "connected"}
         def close(self): pass
     monkeypatch.setattr(service, "CloudBridge", FakeCloud)
     assert agent.check_connection()["status"] == "connected"

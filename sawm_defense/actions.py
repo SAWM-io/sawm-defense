@@ -19,7 +19,7 @@ import uuid
 from urllib.parse import urlparse
 
 from .platforms import file_digest, no_symlink, psutil, utc_now
-from .policy import trusted_auth_event
+from .policy import trusted_auth_event, trusted_network_policy_event
 
 
 def _inside(path, roots):
@@ -260,8 +260,8 @@ class ActionExecutor:
         automatic = config.get("_automatic_response") is True
         auth_autoscope = (automatic and config.get("autoblock_auth_ips") is True
                           and trusted_auth_event(event, config))
-        if automatic and not trusted_auth_event(event, config):
-            raise ValueError("Le blocage automatique exige des échecs SSH système vérifiés et récents")
+        if automatic and not (trusted_auth_event(event, config) or trusted_network_policy_event(event, config)):
+            raise ValueError("Le blocage automatique exige une preuve système récente et la politique locale correspondante")
         if not ipaddress.ip_address(ip).is_global or (ip not in config.get("allowed_remote_ips", []) and not auth_autoscope):
             raise ValueError("L'IP publique doit être autorisée explicitement ou par la politique SSH vérifiée")
         if ip in config.get("protected_remote_ips", []):

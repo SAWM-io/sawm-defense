@@ -2,6 +2,8 @@
 
 L’interface native et la commande serveur utilisent le même service local, les mêmes règles et le même journal. L’application n’ouvre pas de serveur Web local. Elle observe, signale et réalise les interventions autorisées sans attendre une question dans le chat.
 
+Ce guide décrit la **console SOC 0.3**. Vérifiez la version installée ; les paquets 0.2.1 n’incluent pas encore ces nouveaux écrans.
+
 ## Première connexion
 
 1. La veille locale démarre à l’ouverture si **Démarrer la veille locale à l’ouverture** est activé. Ce démarrage n’accorde aucun droit supplémentaire. Une pause décidée dans l’interface reste effective jusqu’à votre prochain démarrage ; l’actualisation ne l’annule pas.
@@ -14,15 +16,26 @@ La clé doit avoir les autorisations appropriées dans votre environnement Cloud
 
 ## Comprendre la console
 
-- **Vue d’ensemble** : état de la veille, accès Cloud, moteur antivirus disponible, permissions, courbes CPU/RAM et couverture effective. Une mesure manquante n’est pas remplacée par zéro.
+- **Console SOC** : état de la veille, signaux critiques ou à examiner, cadence SAWM, dernière et prochaine revue, file d’analyse, sources et budget API réel. Les courbes CPU/RAM reposent sur les échantillons du service. Le bouton **Capteurs & limites** ouvre la couverture détaillée sans encombrer les priorités. Une mesure absente n’est pas remplacée par zéro.
 - **Observations** : événements datés, filtres, preuve structurée et identifiant. Sélectionnez un événement pour demander une analyse ou examiner une intervention manuelle.
 - **Système** : processus et connexions visibles. L’inventaire des logiciels se lance à la demande, pas à chaque rafraîchissement.
+- **Réseau & accès** : référence réseau, événements de connexion, changements de droits des chemins choisis et journaux LDAP. Filtrez par famille puis sélectionnez une ligne pour lire la provenance et l’attribution. Ces données restent en lecture seule ; aucun compte LDAP n’est modifié.
 - **Veille & missions** : boîte d’alertes persistante, livraison au système de notifications, accusé de lecture, missions demandées et résultats. Le double-clic ouvre les détails.
-- **Parler à SAWM** : demandez une explication ou un bilan. Le dialogue ne confère pas de nouveaux droits et ne devient pas un terminal système. Utilisez les missions typées pour confier du travail.
+- **SAWM** : demandez une explication ou un bilan. Le dialogue ne confère pas de nouveaux droits et ne devient pas un terminal système. Utilisez les missions typées pour confier du travail.
 - **Réglages** : périmètres, clé, notifications, analyse autonome, sources SSH, permissions d’intervention, budget, rétention et démarrage.
 - **Journal** : actions, refus, résultats et appels Cloud. Jetons et durées sont affichés lorsqu’ils sont fournis par l’API.
 
 Les séparateurs des panneaux se déplacent à la souris. Les détails sont sélectionnables. Une notification n’indique pas à elle seule un incident confirmé : ouvrez sa preuve et son niveau de gravité. « Soumise à l’OS » signifie que le système a accepté la demande, pas que l’utilisateur l’a vue. L’accusé de lecture est séparé ; la boîte conserve aussi les erreurs de livraison et les alertes regroupées.
+
+## Cadence, préréglages et coût
+
+Dans **Réglages → Cadence d’analyse & plafond Cloud**, choisissez **Équilibré** (30 secondes, 1 200 requêtes API/h) ou **Serveur critique** (10 secondes, 3 600 requêtes API/h), puis cliquez **Préparer ces réglages**. Les nombres changent à l’écran, mais rien n’est encore enregistré. Le Cloud, le partage et le mandat restent inchangés. **Enregistrer** présente une confirmation pour les nouvelles valeurs et les augmentations de coût ou de droits.
+
+La cadence locale mesure la machine ; la cadence SAWM décide quand une revue Cloud peut commencer. Elles sont distinctes. Avec le rythme adaptatif, une file critique peut être revue à 10 secondes ; une file vide ralentit le rythme de base jusqu’à quatre fois, sans envoyer une analyse inutile. **Effectuer une revue périodique même sans alerte nouvelle** demande explicitement un bilan périodique et consomme des appels Cloud. Désactivez cette option pour réserver les analyses aux signaux à examiner.
+
+Le compteur affiche les **requêtes API réelles** utilisées/restantes, pas un nombre d’analyses ni des euros. Une analyse utilise plusieurs requêtes ; les tentatives échouées comptent aussi. **0 = appels suspendus**, jamais illimités. Le Cloud est désactivé dans un nouveau profil ; son plafond initial de 1 200 requêtes/h n’autorise pas son activation. Les anciens plafonds sont conservés.
+
+Dans la console, **Dernière revue** est une tentative ; **Dernière réussite** est un retour effectivement reçu. Une reprise différée ou un budget épuisé reste visible. La date de prochaine revue est une échéance cible, pas une garantie de délai. Double-cliquez une observation prioritaire pour ouvrir sa preuve ; ouvrez une ligne de la file pour consulter ce qui attend l’analyse. Cette file ne prouve pas qu’un incident est résolu.
 
 ## Confier une mission
 
@@ -57,6 +70,14 @@ La fenêtre et le seuil configurés déterminent quand des échecs SSH répété
 
 Ce mécanisme reconnaît un signal d’authentification dans un périmètre précis. Il n’identifie pas la personne derrière une IP et ne remplace pas une inspection de tous les protocoles réseau.
 
+## Réseau, droits et LDAP
+
+La corrélation réseau travaille sur les sockets accessibles au compte, sans balayage du réseau ni déchiffrement de trafic. Une référence conserve les associations vues entre programme, utilisateur, destination et service ; elle n’est pas une liste de destinations certifiées sûres. Les séquences de ports/destinations et les changements de référence restent des signaux à examiner.
+
+Trois listes ont des rôles différents : **IP autorisées au blocage** désigne les cibles sur lesquelles une intervention est permise ; **IP interdites** définit la politique réseau à surveiller ; **IP protégées** exclut des adresses de toute intervention. Une permission générale de blocage ne transforme pas toutes les autres connexions en infractions. Le blocage automatique d’une destination interdite exige son option distincte, une preuve récente attribuée, les permissions et un exécuteur disponible.
+
+Pour les accès, configurez les chemins exacts et les journaux OpenLDAP `slapd` accessibles. L’observation de permissions/propriétaires ne parcourt pas automatiquement toute une arborescence et n’identifie pas l’auteur de chaque changement. Sous Windows, les bits de fichier ne représentent pas une analyse complète des ACL. Les journaux LDAP importés sont des textes non authentifiés : échecs répétés et changements d’attributs produisent des alertes, sans modification d’identité ni révocation autonome.
+
 ## Fichiers téléchargés et antivirus
 
 Avec **Surveiller aussi le dossier Téléchargements** et **Analyser automatiquement**, les fichiers nouveaux ou modifiés sont analysés après le délai de stabilité configuré et dans les limites de taille du service. L’inspection structurelle fonctionne même sans moteur antivirus : en-têtes, type réel, métadonnées, structures d’archives et informations de signature disponibles. ClamAV ou Microsoft Defender sont sollicités en complément selon leur présence et le système ; l’écran annonce l’absence de moteur à signatures. Ces signatures restent sous la responsabilité de l’administrateur.
@@ -73,6 +94,6 @@ Si la console porte elle-même la veille, sa fermeture demande confirmation et a
 
 **Rapport d’activité** produit un HTML lisible ou un JSON. Il peut contenir des chemins, adresses et noms d’utilisateur : partagez-le avec les personnes autorisées. La chaîne locale détecte les incohérences ; elle n’est pas une attestation indépendante d’un hôte entièrement compromis.
 
-Le budget compte des **opérations** Cloud par heure. Une opération peut contenir plusieurs requêtes HTTP ; la consommation facturée est celle des API. Voir aussi [la contribution ISO 27001 et CIS](ISO27001-CIS.md), sans assimilation à une certification.
+Le budget compte les **requêtes API réelles** par heure. La consommation facturée dépend des API et des jetons ; le compteur de requêtes n’est pas un compteur de dépenses en euros. Voir aussi [la contribution ISO 27001 et CIS](ISO27001-CIS.md), sans assimilation à une certification.
 
 Le retrait d’un blocage temporaire est réalisé par le service à l’échéance, puis rattrapé à la reprise si nécessaire. Une règle UFW ou Windows peut donc subsister pendant un arrêt de l’agent ; ce délai n’est pas une expiration garantie par le noyau.

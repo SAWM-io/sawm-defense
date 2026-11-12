@@ -13,7 +13,10 @@ args = [sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--onedir
         "--add-data", str(root / "LICENSE") + ":.",
         "--add-data", str(root / "NOTICE") + ":."]
 if sys.platform == "darwin":
-    args += ["--windowed", "--osx-bundle-identifier", "io.sawm.defense"]
+    args += ["--windowed", "--osx-bundle-identifier", "io.sawm.defense",
+             "--icon", str(root / "sawm_defense/assets/sawm-defense.icns")]
+elif sys.platform == "win32":
+    args += ["--icon", str(root / "sawm_defense/assets/sawm-defense.ico")]
 args += [str(root / "packaging/entrypoint.py")]
 subprocess.run(args, cwd=root, check=True)
 print("Built", platform.system(), platform.machine(), root / "dist")

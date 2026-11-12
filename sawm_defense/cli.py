@@ -39,16 +39,20 @@ def parser():
     config.add_argument("--watch-path", action="append")
     config.add_argument("--cloud", action=argparse.BooleanOptionalAction, default=None)
     config.add_argument("--upload-events", action=argparse.BooleanOptionalAction, default=None)
-    config.add_argument("--cloud-per-hour", type=int)
+    config.add_argument("--cloud-per-hour", type=int, help="Plafond de requêtes API réelles/heure (0..20000), pas nombre d'analyses")
+    config.add_argument("--cloud-analysis-interval", type=int, help="Cadence cible des analyses en secondes (10..3600)")
+    config.add_argument("--cloud-adaptive", action=argparse.BooleanOptionalAction, default=None)
+    config.add_argument("--cloud-heartbeat", action=argparse.BooleanOptionalAction, default=None,
+                        help="Revue périodique même sans alerte ; consomme des requêtes et des crédits Cloud")
     config.add_argument("--prompt-key", action="store_true")
     config.add_argument("--session-key", action="store_true", help="Clé en mémoire seulement, pour cette invocation")
     config.add_argument("--auto-quarantine", action=argparse.BooleanOptionalAction, default=None)
-    for name in ("protect-downloads", "automatic-scan", "notifications", "autonomous-analysis", "auth-journal", "auto-block-auth", "auto-terminate", "auto-block-ip"):
+    for name in ("protect-downloads", "automatic-scan", "notifications", "autonomous-analysis", "auth-journal", "auto-block-auth", "auto-terminate", "auto-block-ip", "network-security", "auto-block-network-policy"):
         config.add_argument("--" + name, action=argparse.BooleanOptionalAction, default=None)
-    for name in ("protected-ip", "auth-log", "kernel-audit-path", "allow-process", "allow-ip"):
+    for name in ("protected-ip", "auth-log", "kernel-audit-path", "allow-process", "allow-ip", "deny-ip", "access-monitor-path", "ldap-log"):
         config.add_argument("--" + name, action="append")
     config.add_argument("--auto-block-seconds", type=int)
-    sub.add_parser("check-cloud", help="Vérifier l'accès Cloud (consomme le budget d'opérations)")
+    sub.add_parser("check-cloud", help="Vérifier l'accès Cloud (2 requêtes API)")
     scan = sub.add_parser("scan", help="Inspection statique locale et antivirus, s'il est disponible")
     scan.add_argument("path", type=Path)
     sub.add_parser("inventory", help="Inventorier les logiciels installés")
@@ -102,12 +106,16 @@ def main(argv=None):
             for arg, key in (("base_url", "cloud_base_url"), ("space", "space_id"), ("entity", "entity_id"),
                              ("watch_path", "monitor_paths"), ("cloud", "cloud_enabled"),
                              ("upload_events", "cloud_upload_enabled"), ("cloud_per_hour", "cloud_per_hour"),
+                             ("cloud_analysis_interval", "cloud_analysis_interval_seconds"),
+                             ("cloud_adaptive", "cloud_adaptive_enabled"), ("cloud_heartbeat", "cloud_heartbeat_enabled"),
                              ("protect_downloads", "protect_downloads"), ("automatic_scan", "automatic_scan_enabled"),
                              ("notifications", "notifications_enabled"), ("autonomous_analysis", "autonomous_analysis_enabled"),
                              ("auth_journal", "auth_journal_enabled"), ("auto_block_auth", "autoblock_auth_ips"),
                              ("auto_block_seconds", "auto_block_seconds"), ("protected_ip", "protected_remote_ips"),
                              ("auth_log", "auth_log_paths"), ("kernel_audit_path", "kernel_audit_paths"),
-                             ("allow_process", "allowed_process_paths"), ("allow_ip", "allowed_remote_ips")):
+                             ("allow_process", "allowed_process_paths"), ("allow_ip", "allowed_remote_ips"),
+                             ("network_security", "network_security_enabled"), ("auto_block_network_policy", "autoblock_network_policy"),
+                             ("deny_ip", "denied_remote_ips"), ("access_monitor_path", "access_monitor_paths"), ("ldap_log", "ldap_log_paths")):
                 value = getattr(args, arg)
                 if value is not None:
                     patch[key] = value

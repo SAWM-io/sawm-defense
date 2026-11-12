@@ -20,6 +20,10 @@ class CloudError(RuntimeError):
     """Safe public error; never embeds request bodies, keys or server errors."""
 
 
+class CloudBudgetExceeded(CloudError, ValueError):
+    """No network call was sent: the local API-request budget refused it."""
+
+
 _DETAIL_FIELDS = frozenset({
     "path", "sha256", "previous_sha256", "size", "size_bytes", "mtime", "pid", "name", "exe",
     "username", "create_time", "cpu_percent", "memory_percent", "remote", "local", "ip", "port",
@@ -33,7 +37,18 @@ _DETAIL_FIELDS = frozenset({
     "pdf_markers", "archive", "directory_inspected", "entries", "compressed_bytes", "expanded_bytes", "declared_entries",
     "failure_count", "threshold", "window_seconds", "first_failure_at", "last_failure_at", "source_kind",
     "sources", "evidence_ids", "producer", "_PID", "_UID", "_COMM", "_EXE", "_TRANSPORT", "attacker_identity_known",
-    "protected_remote_ip", "test_fixture",
+    "protected_remote_ip", "test_fixture", "resource", "percent", "snapshot_age_seconds",
+    "review_context", "baseline", "distinct_ports", "distinct_destinations", "window_seconds",
+    "destination_denied", "remote_ports", "remote_ips", "protocol", "observed_count",
+    "old_mode", "new_mode", "old_uid", "new_uid", "old_gid", "new_gid", "attribution",
+    "direction", "policy_rule", "policy_value", "policy_violation", "distinct_count", "uncertainty",
+    "automatic_block_eligible", "source", "before", "after", "uid", "gid", "inode", "device",
+    "actor_attributed", "subject_hash", "attributes", "operation_result", "result_code",
+    "remote_port", "socket_status", "observed_at", "process_attributed", "time_basis",
+    "network_source", "network_access_denied", "connections_truncated", "process_access_denied",
+    "process_scan_complete", "processes_truncated", "process_enumeration_error", "events_truncated",
+    "scan_complete", "monitored_roots", "scope", "file_limit", "files_seen", "files_hashed",
+    "skipped", "sensor_error", "journal_write_failed",
 })
 
 
@@ -45,12 +60,13 @@ def _numeric_usage(value):
 
 
 class CloudBridge:
-    def __init__(self, config, api_key, record_call, *, http_client=None, session_id=None):
+    def __init__(self, config, api_key, record_call, *, http_client=None, session_id=None, reserve_request=None):
         self.config = validate_config(config)
         if not self.config["space_id"] or not self.config["entity_id"] or not isinstance(api_key,str) or not api_key.strip():
             raise CloudError("Renseignez l'espace, l'entité et la clé Cloud.")
         self._key = api_key.strip()
         self._record_call = record_call
+        self._reserve_request = reserve_request
         self._client = sdk.BasiraClient(
             self.config["space_id"], self._key, base_url=self.config["cloud_base_url"],
             timeout=15, stream_timeout=90, max_retries=0, http_client=http_client,
@@ -67,6 +83,10 @@ class CloudBridge:
         return str(value).replace(self._key,"[clé masquée]")[:maximum]
 
     def _call(self, operation, fn, **metadata):
+        # SDK retries are disabled: each guarded operation sends one API request.
+        # Budget refusals are not recorded as requests that reached the service.
+        if self._reserve_request is not None:
+            self._reserve_request(operation)
         start = time.monotonic()
         record = {"operation":operation,"attempt":1,**metadata}
         try:
@@ -169,6 +189,9 @@ class CloudBridge:
                     raise CloudError("Statut d'ingestion inconnu.")
                 else:
                     break
+            except CloudBudgetExceeded:
+                return {"status":"error","event_ids":confirmed,"jobs":jobs,"error_code":"local_budget_exhausted",
+                        "error":"Budget local atteint ; événements non confirmés conservés."}
             except CloudError:
                 return {"status":"error","event_ids":confirmed,"jobs":jobs,"error":"Cloud indisponible ; événements non confirmés conservés."}
         return {"status":"completed" if len(confirmed)==len(sanitized) else "pending","event_ids":confirmed,"jobs":jobs}
