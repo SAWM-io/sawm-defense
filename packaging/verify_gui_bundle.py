@@ -24,6 +24,11 @@ import tempfile
 import time
 
 
+# Keep the full main-window title explicit. A regression test checks this
+# against the actual GUI constructor without importing or launching the app.
+APPLICATION_TITLE = "SAWM Defense — Console de sécurité"
+
+
 def linux_owner_pid(identifier):
     """Attribute an X resource using XRes 1.2, not a client-set window tag.
 
@@ -90,7 +95,7 @@ def linux_window(pid):
     try:
         # Name is only a candidate filter. XRes must then establish the exact
         # owner PID; a same-named window belonging to another process fails.
-        found = subprocess.run(["xdotool", "search", "--onlyvisible", "--name", "^SAWM Defense.*Protection"],
+        found = subprocess.run(["xdotool", "search", "--onlyvisible", "--name", "^SAWM Defense"],
                                capture_output=True, text=True, encoding="utf-8", timeout=.5,
                                env={**os.environ, "LC_ALL": "C.UTF-8"})
     except subprocess.TimeoutExpired:
@@ -117,13 +122,15 @@ def linux_window(pid):
             continue
         width = re.search(r"^\s*Width:\s*(\d+)", info.stdout, re.M)
         height = re.search(r"^\s*Height:\s*(\d+)", info.stdout, re.M)
+        title_matches = f'"{APPLICATION_TITLE}"' in info.stdout
         candidate.update({"info_returncode": info.returncode, "width": int(width[1]) if width else None,
                           "height": int(height[1]) if height else None, "viewable": "Map State: IsViewable" in info.stdout,
-                          "title_matches": "SAWM Defense" in info.stdout and "Protection" in info.stdout})
+                          "title_matches": title_matches})
         if (info.returncode == 0 and "Map State: IsViewable" in info.stdout
-                and "SAWM Defense" in info.stdout and "Protection" in info.stdout and width and height
+                and title_matches and width and height
                 and int(width[1]) >= 800 and int(height[1]) >= 500):
             return {"window_id": identifier, "owner_pid": owner, "width": int(width[1]), "height": int(height[1]),
+                    "title": APPLICATION_TITLE,
                     "method": "XRes 1.2 server-side owner PID + xwininfo IsViewable + application title"}
     return None
 
@@ -184,7 +191,7 @@ def windows_window(pid):
             return True
         title = ctypes.create_unicode_buffer(512)
         user.GetWindowTextW(hwnd, title, len(title))
-        if not title.value.startswith("SAWM Defense") or "Protection" not in title.value:
+        if title.value != APPLICATION_TITLE:
             return True
         rect = wintypes.RECT()
         if user.GetWindowRect(hwnd, ctypes.byref(rect)):

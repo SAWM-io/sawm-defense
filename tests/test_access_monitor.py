@@ -23,7 +23,8 @@ def setup_ldap(tmp_path, **config):
 
 
 def append(log, text):
-    with log.open("a", encoding="utf-8") as stream:
+    # Keep fixture bytes exact, including explicit CRLF, on every OS.
+    with log.open("a", encoding="utf-8", newline="") as stream:
         stream.write(text)
 
 
@@ -137,6 +138,8 @@ def test_partial_lines_crlf_and_bounded_backlog_keep_cursor(tmp_path):
     monitor.MAX_LINES = 2
     text = ''.join(bind_failure(i) for i in range(3)).replace('\n', '\r\n')
     append(log, text[:-5])
+    assert log.read_bytes() == text[:-5].encode("utf-8")
+    assert b"\r\r\n" not in log.read_bytes()
     first = monitor.sample()
     assert any(e["kind"] == "access_sensor_gap" for e in first)
     assert not any(e["kind"] == "ldap_auth_burst" for e in first)

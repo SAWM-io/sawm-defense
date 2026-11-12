@@ -165,3 +165,30 @@ def test_actual_loopback_socket_is_observed_without_external_network_or_firewall
             events = monitor.sample(sample(*rows))
             assert any(e["kind"] == "network_baseline_change" for e in events)
             assert all(e["severity"] == "info" and not e["details"]["malware_proven"] for e in events)
+
+
+def test_coarse_system_clock_datetime_rounding_preserves_scan_window_across_restart(tmp_path, monkeypatch):
+    # Windows clocks can return the same epoch value for adjacent calls. The
+    # datetime representation rounds that value to microseconds and can place
+    # sampled_at a fraction of a microsecond above the next time.time() result.
+    epoch = 1762963200.1234567
+    timestamp = datetime.fromtimestamp(epoch, timezone.utc).isoformat()
+    assert 0 < datetime.fromisoformat(timestamp).timestamp() - epoch < 0.000001
+    monkeypatch.setattr(network_security.time, "time", lambda: epoch)
+    monitor = NetworkSecurity({"network_port_scan_threshold": 3}, tmp_path)
+    monitor.sample(sample(sampled_at=timestamp))
+    monitor.sample(sample(connection(port=80), sampled_at=timestamp))
+    monitor.sample(sample(connection(port=80), connection(port=81), sampled_at=timestamp))
+    monitor = NetworkSecurity({"network_port_scan_threshold": 3}, tmp_path)
+    events = monitor.sample(sample(connection(port=80), connection(port=81), connection(port=82), sampled_at=timestamp))
+    assert monitor.status()["coverage"] == "sampled_sockets_only"
+    assert any(e["kind"] == "network_port_scan" and e["details"]["distinct_count"] == 3 for e in events)
+
+
+def test_future_snapshot_outside_submillisecond_rounding_is_rejected(tmp_path, monkeypatch):
+    epoch = 1762963200.0
+    monkeypatch.setattr(network_security.time, "time", lambda: epoch)
+    monitor = NetworkSecurity({"denied_remote_ips": [IP]}, tmp_path)
+    future = datetime.fromtimestamp(epoch + .1, timezone.utc).isoformat()
+    assert monitor.sample(sample(connection(), sampled_at=future)) == []
+    assert monitor.status()["coverage"] == "stale_snapshot"

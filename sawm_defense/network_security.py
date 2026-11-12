@@ -16,6 +16,8 @@ from .config import private_dir
 
 MAX_BASELINE = 4096
 MAX_CONTACTS = 2048
+# datetime serializes microseconds; epoch floats can round just above time.time().
+CLOCK_ROUNDING_SECONDS = 0.000001
 
 
 def _stamp(value=None):
@@ -128,7 +130,7 @@ class NetworkSecurity:
         try:
             observed = datetime.fromisoformat(snapshot["sampled_at"].replace("Z", "+00:00"))
             at = observed.timestamp()
-            if observed.tzinfo is None or not 0 <= now - at <= 30:
+            if observed.tzinfo is None or not -CLOCK_ROUNDING_SECONDS <= now - at <= 30:
                 raise ValueError
         except (KeyError, ValueError, TypeError, AttributeError):
             self._status["coverage"] = "stale_snapshot"

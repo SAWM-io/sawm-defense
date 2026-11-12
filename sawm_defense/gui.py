@@ -288,8 +288,16 @@ class DefenseApp:
         right.columnconfigure(0, weight=1)
         right.rowconfigure(4, weight=1)
         ttk.Label(right, text="Cycle de décision", style="Panel.TLabel", font=(self.font, 13, "bold")).grid(row=0, column=0, sticky="w")
-        self.scheduler_text = self._text(right, height=8)
-        self.scheduler_text.grid(row=1, column=0, sticky="ew", pady=(9, 7))
+        scheduler_panel = ttk.Frame(right, style="Panel.TFrame")
+        scheduler_panel.columnconfigure(0, weight=1)
+        scheduler_panel.grid(row=1, column=0, sticky="ew", pady=(9, 7))
+        # Keep the queue and its evidence button visible on laptop displays.
+        # Long scheduling receipts remain readable in a separate scroll area.
+        self.scheduler_text = self._text(scheduler_panel, height=4)
+        self.scheduler_text.grid(row=0, column=0, sticky="ew")
+        scheduler_scroll = ttk.Scrollbar(scheduler_panel, orient="vertical", command=self.scheduler_text.yview)
+        scheduler_scroll.grid(row=0, column=1, sticky="ns")
+        self.scheduler_text.configure(yscrollcommand=scheduler_scroll.set)
         ttk.Button(right, text="Régler la cadence et le budget →", command=lambda: self.tabs.select(self.pages["settings"])).grid(row=2, column=0, sticky="w", pady=(0, 12))
         self.review_note = ttk.Label(right, text="File d’analyse SAWM", style="Panel.TLabel", font=(self.font, 12, "bold"))
         self.review_note.grid(row=3, column=0, sticky="w", pady=(0, 8))

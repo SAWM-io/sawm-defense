@@ -1,4 +1,5 @@
 """The packaging probe must not mistake another process or a splash for the app."""
+import ast
 import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,7 +16,7 @@ def probe():
     return module
 
 
-def linux_stub(probe, monkeypatch, *, owner=1234, title="SAWM Defense — Protection & activité", width=1280, height=870, visible=True):
+def linux_stub(probe, monkeypatch, *, owner=1234, title="SAWM Defense — Console de sécurité", width=1280, height=870, visible=True):
     monkeypatch.setenv("DISPLAY", ":99")
     monkeypatch.setattr(probe.shutil, "which", lambda name: "/usr/bin/" + name)
     monkeypatch.setattr(probe, "linux_owner_pid", lambda identifier: owner)
@@ -29,6 +30,7 @@ def linux_stub(probe, monkeypatch, *, owner=1234, title="SAWM Defense — Protec
         assert kwargs["encoding"] == "utf-8"
         if command[0] == "xdotool":
             assert "--name" in command and "--pid" not in command
+            assert command[-1] == "^SAWM Defense"
             return SimpleNamespace(returncode=0, stdout="6291460\n")
         assert command == ["xwininfo", "-id", "6291460", "-stats"]
         return SimpleNamespace(returncode=0, stdout=f'xwininfo: Window id: 0x600004 "{title}"\n  Width: {width}\n  Height: {height}\n  Map State: ' + ("IsViewable" if visible else "IsUnMapped"))
@@ -51,7 +53,8 @@ def test_linux_probe_rejects_unknown_or_other_pid_even_with_matching_title(probe
     assert len(calls) == 1  # Do not even inspect another process's window.
 
 
-@pytest.mark.parametrize("overrides", [{"title":"Other application"}, {"width":799}, {"height":499}, {"visible":False}])
+@pytest.mark.parametrize("overrides", [{"title":"Other application"}, {"title":"SAWM Defense — Protection & activité"},
+    {"title":"SAWM Defense — Console de sécurité · dialog"}, {"width":799}, {"height":499}, {"visible":False}])
 def test_linux_probe_rejects_wrong_title_small_or_hidden_window(probe, monkeypatch, overrides):
     linux_stub(probe, monkeypatch, **overrides)
     assert probe.linux_window(1234) is None
@@ -64,3 +67,15 @@ def test_linux_probe_refuses_missing_owner_api_without_name_only_fallback(probe,
     monkeypatch.setattr(probe,"linux_owner_pid", missing)
     with pytest.raises(RuntimeError,match="XRes"):
         probe.linux_window(1234)
+
+
+def test_probe_title_matches_actual_application_main_window(probe):
+    """A redesigned main window must not silently strand native Linux/Win CI."""
+    path = Path(__file__).resolve().parents[1] / "sawm_defense" / "gui.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    titles = [node.args[0].value for node in ast.walk(tree)
+              if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+              and node.func.attr == "title" and isinstance(node.func.value, ast.Name)
+              and node.func.value.id == "root" and node.args
+              and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str)]
+    assert titles == [probe.APPLICATION_TITLE]
